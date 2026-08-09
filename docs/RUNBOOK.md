@@ -6,6 +6,11 @@ a value that does not exist yet, or a decision a human has to make.
 Three files point here — `providers.tf`, `variables.tf` and `main.tf` — so if you are
 reading this after following a comment, you are in the right place.
 
+1. [Initialising the remote state backend](#1-initialising-the-remote-state-backend)
+2. [Bootstrapping a new cluster: the two-pass build](#2-bootstrapping-a-new-cluster-the-two-pass-build)
+3. [State: what protects it, and how to get it back](#3-state-what-protects-it-and-how-to-get-it-back)
+4. [etcd: what is backed up, and how to restore it](#4-etcd-what-is-backed-up-and-how-to-restore-it)
+
 ---
 
 ## 1. Initialising the remote state backend
@@ -260,3 +265,120 @@ Cluster *data* is not in Terraform state. etcd snapshots run every 4 hours with 
 and `etcd_s3_backup` in `main.tf`. Restoring etcd rebuilds Kubernetes objects; restoring
 Terraform state rebuilds Terraform's knowledge of the servers. Losing either one does not
 help you recover the other.
+
+---
+
+## 4. etcd: what is backed up, and how to restore it
+
+> **This procedure has been written but not executed.** It is assembled from k3s'
+> documented `--cluster-reset` behaviour and from what this configuration actually sets,
+> and every command below is one you can read in advance. It has not been run end to end
+> against a real cluster, and until it has, treat the RTO as unknown rather than short.
+> Executing it — deliberately, on the `ha` variant, after killing a control-plane node —
+> is the step that turns this section from paper into a procedure.
+
+Terraform state and etcd are two different backups solving two different problems.
+Restoring etcd rebuilds *Kubernetes objects*: namespaces, secrets, deployments, ArgoCD
+Applications. Restoring Terraform state rebuilds *Terraform's knowledge of the servers*.
+Losing one does not help you recover the other. §3 covers the other one.
+
+### What is configured
+
+`main.tf` sets `etcd_s3_backup` (endpoint, bucket, region, credentials) and, in
+`control_planes_custom_config`:
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `etcd-snapshot-schedule-cron` | `0 */4 * * *` | a snapshot every four hours → **RPO ≤ 4 h** |
+| `etcd-snapshot-retention` | `42` | 42 × 4 h = **a rolling 7 days** |
+
+Snapshots are written to the control-plane node's disk *and* uploaded to the bucket.
+Sized against measurement: snapshots of this cluster are 40–51 MB, so 42 of them is about
+2.1 GB locally against ~13 GB free on a 39 GB control-plane disk.
+
+The defaults, had they been left alone, were every 12 hours keeping 5 — an RPO of half a
+day and a retention window of about two and a half days. Restore a Friday evening mistake
+on Monday and the snapshot that predates it is already gone.
+
+### Before you need it: the two things that make a restore impossible
+
+1. **`k3s_token`.** A restored server rejoins using the cluster token. If you cannot
+   produce the value that was in effect when the snapshot was taken, the snapshot is
+   inert. It lives in `secrets.auto.tfvars`, mode 0600, on one machine. **Keep a copy
+   somewhere that survives losing that machine**, and treat rotating it as a event that
+   invalidates every older snapshot's usability.
+2. **The S3 credentials for the snapshot bucket.** Same argument. They are in the same
+   file, and if that file is only on the laptop that died, so is your recovery.
+
+Verify you can list snapshots *before* an incident, not during one:
+
+```bash
+sudo k3s etcd-snapshot list --s3 \
+  --s3-bucket=<bucket> --s3-endpoint=<endpoint> --s3-region=<region> \
+  --s3-access-key=<key> --s3-secret-key=<secret>
+```
+
+### Restoring
+
+The shape of the operation: **all servers stop, one server is reset from the snapshot and
+becomes a new single-member cluster, the others wipe their database and rejoin it.** A
+restore is not a rolling operation and there is no way to do it without downtime.
+
+```bash
+# 1. Stop k3s on EVERY server node. Do this first and completely — a surviving member
+#    with the old data will fight the restored one over cluster identity.
+sudo systemctl stop k3s          # on each control-plane node
+
+# 2. On ONE control-plane node, reset the cluster from a snapshot. Use the S3 form to
+#    pull it directly; use a local path if the node still has the file.
+sudo k3s server \
+  --cluster-reset \
+  --etcd-s3 \
+  --cluster-reset-restore-path=<snapshot-name> \
+  --etcd-s3-bucket=<bucket> --etcd-s3-endpoint=<endpoint> --etcd-s3-region=<region> \
+  --etcd-s3-access-key=<key> --etcd-s3-secret-key=<secret> \
+  --token=<k3s_token>
+
+# It runs in the foreground and exits when the reset completes, printing a line telling
+# you to restart. That exit is success, not a crash.
+
+# 3. Start it as a normal service. You now have a ONE-member cluster.
+sudo systemctl start k3s
+kubectl get nodes    # the other servers will show NotReady; that is expected
+
+# 4. On EVERY OTHER control-plane node: delete the old etcd database, then start.
+#    Skipping this is the classic mistake — the node tries to rejoin with a database
+#    from the cluster that no longer exists and never becomes Ready.
+sudo rm -rf /var/lib/rancher/k3s/server/db
+sudo systemctl start k3s
+
+# 5. Agents usually need nothing. If one stays NotReady:
+sudo systemctl restart k3s-agent
+```
+
+### After a restore, before declaring it over
+
+```bash
+kubectl get nodes                                   # every node Ready
+kubectl -n kube-system get pods                     # CNI, CSI, CCM, kured all running
+kubectl -n argocd get applications                  # Synced + Healthy, or syncing
+kubectl get pvc -A                                  # bound to the volumes they had
+```
+
+Two things that will surprise you:
+
+- **The cluster is back at the snapshot's moment in time.** Anything created since — a
+  namespace, a secret, an ArgoCD Application — is gone from Kubernetes but may still
+  exist in the cloud. Volumes provisioned after the snapshot become orphans: real,
+  billed, and referenced by nothing.
+- **Terraform does not know a restore happened.** Run `terraform plan` afterwards and
+  read it carefully. Resources it created after the snapshot still exist in the cloud and
+  in Terraform state, but the Kubernetes objects backing them may not — the plan is the
+  only thing that will show you the divergence.
+
+### What this does not protect against
+
+etcd snapshots contain Kubernetes objects, **not persistent volume data**. Restoring etcd
+restores the PersistentVolumeClaim; it does not restore what was inside the database that
+claim was mounted into. Application data is a separate backup problem with a separate
+answer — volume snapshots, or dumps taken by the applications themselves.
