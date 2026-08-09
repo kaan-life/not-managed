@@ -1,0 +1,85 @@
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It contains material from the projects below. Their notices are reproduced here, as
+Apache-2.0 section 4(d) and the MIT notice-retention condition require. A complete
+dependency inventory — including components that are only referenced and therefore carry
+no attribution obligation — is in THIRD_PARTY.md.
+
+================================================================================
+kube-hetzner / terraform-hcloud-kube-hetzner
+https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner
+Pinned version: v2.19.2
+License: MIT
+================================================================================
+
+Two files in each variant directory are derived from this project:
+
+  packer/hcloud-microos-snapshots.pkr.hcl
+      Derived from the upstream packer-template of the same name. It differs from
+      upstream v2.19.2 in 18 lines out of roughly 210; the difference is SHA256
+      verification of the downloaded openSUSE MicroOS images. It carries an MIT
+      SPDX identifier for that reason.
+
+  main.tf
+      Configuration-level derivation from upstream's kube.tf.example: 30 of 249
+      substantive unique lines are shared. Attributed out of caution rather than
+      obligation.
+
+Upstream's LICENSE file contains the MIT permission text with NO copyright holder line.
+There is therefore no copyright notice to retain, and none has been invented. Attribution
+is by project name, repository URL and pinned version, and the permission text is
+reproduced verbatim below, which over-satisfies the condition rather than guessing at a
+holder.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this
+    software and associated documentation files (the "Software"), to deal in the Software
+    without restriction, including without limitation the rights to use, copy, modify,
+    merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to the following
+    conditions:
+
+    The above copyright notice and this permission notice shall be included in all copies
+    or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+    INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+    HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+    CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+    OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+================================================================================
+k3s-io / k3s   and   rancher / local-path-provisioner
+https://github.com/k3s-io/k3s
+https://github.com/rancher/local-path-provisioner
+Vendored from: k3s v1.33.13+k3s2, manifests/local-storage.yaml
+License: Apache License, Version 2.0
+================================================================================
+
+One file in each variant directory is a vendored copy:
+
+  extra-manifests/local-path-provisioner.yaml.tpl
+      Generated from k3s' packaged local-storage manifest by
+      scripts/vendor-local-path.sh, which records the source URL and every
+      transformation in the file's own header. The manifest deploys
+      rancher/local-path-provisioner; both projects are Apache-2.0.
+
+Neither upstream repository publishes a NOTICE file (checked at the pinned k3s tag and at
+local-path-provisioner's default branch: both return 404), so there are no upstream
+attribution notices to propagate beyond the attribution above.
+
+This copy exists because k3s re-applies its own packaged manifest on every start, which
+resets the default-StorageClass annotation. The reasoning is in the generated file's
+header and in docs/RUNBOOK.md; the cost is that this repository, not k3s, is now
+responsible for keeping the manifest current.
+
+================================================================================
+Referenced but not distributed
+================================================================================
+
+The Argo CD Helm chart (argoproj/argo-helm, Apache-2.0), the Terraform providers listed
+in each variant's .terraform.lock.hcl, and the container images pinned in main.tf are
+fetched at deploy time from their own distributors. No copy of them is contained in this
+repository, so no attribution obligation attaches. They are inventoried in THIRD_PARTY.md
+with their licenses and pinned versions anyway, because a reader deciding whether to run
+this should be able to see the whole dependency surface in one place.

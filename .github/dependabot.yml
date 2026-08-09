@@ -1,0 +1,40 @@
+version: 2
+
+# Two ecosystems, and one directory entry per variant because the variants are independent
+# copies (ADR-0007). A single entry would watch one of them and silently ignore the other,
+# which is the same failure mode docs/variant-delta.md exists to prevent.
+#
+# What this actually buys, from docs/managed-k8s-parity.md §3.7: managed Kubernetes ships a
+# vendor-tested compatibility matrix and this stack does not — you are the integration
+# tester. Dependabot does not fix that. It only makes a version change arrive as a pull
+# request you have to read, instead of as a surprise you never see. Every bump still needs
+# the release notes read and, for anything touching storage, a volume snapshot first: an
+# older CSI version reformatted a production volume during a node failover, which is why
+# the pin exists at all.
+
+updates:
+  - package-ecosystem: terraform
+    directory: /variants/solo
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(solo)"
+    labels: [dependencies, terraform, variant:solo]
+
+  - package-ecosystem: terraform
+    directory: /variants/ha
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(ha)"
+    labels: [dependencies, terraform, variant:ha]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(actions)"
+    labels: [dependencies, github-actions]

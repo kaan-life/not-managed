@@ -72,6 +72,12 @@ docs/RUNBOOK.md       procedures that are not expressible as configuration
 docs/managed-k8s-parity.md    twelve capabilities, measured against EKS/GKE/AKS
 docs/cost-comparison.md       measured prices
 docs/variant-delta.md         generated diff between the two variants
+docs/README.md        how these documents are maintained, and which are generated
+NOTICE                upstream attribution that has to travel with a redistribution
+THIRD_PARTY.md        every dependency, its licence, and whether it is distributed here
+CONTRIBUTING.md       DCO sign-off, which licence your patch is under, what gets rejected
+SECURITY.md           private reporting channel, threat model, what is out of scope
+.github/              CI and Dependabot
 ```
 
 ## Status
@@ -83,6 +89,10 @@ This tree is being prepared for publication and is **not finished**.
   empty state; it has not been booted, and neither the control-plane kill nor the etcd
   restore has been executed. That is the next step, and until it happens the availability
   claims are design intentions.
-- Still to come: attribution files (`NOTICE`, `THIRD_PARTY.md`), CI,
-  `docs/managed-k8s-parity.md`, and the finished documentation set. Both variant READMEs
-  are drafts marked as such.
+- **CI is written but has never run.** `.github/workflows/ci.yml` exists and every job body
+  in it was exercised by hand, each one against input it must reject as well as input it
+  must accept — but no commit has yet triggered GitHub Actions on this tree, so there is no
+  green build to point at and none is claimed.
+- Still to come: `docs/ARCHITECTURE.md`, and the finished documentation set. Both variant
+  READMEs are drafts marked as such, and their quickstarts have not been walked end to end
+  by anyone starting from an empty account.
