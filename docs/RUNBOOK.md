@@ -137,34 +137,38 @@ If `kubectl` reports a certificate error naming an IP address, the SAN and the d
 address have diverged — check that both really do come from
 `var.kube_api_tailnet_address` and re-apply.
 
-### The GitHub App private key must be PKCS#1, and the error says otherwise
+### The GitHub App private key must be PKCS#1, and the error points the wrong way
 
 The `github` provider authenticates as a GitHub App using the PEM at
-`github_app_private_key_path`. It accepts **PKCS#1** only — the file must start with:
+`github_app_private_key_path`, and it accepts **PKCS#1 only**. The two encodings are
+distinguishable from the first line: a PKCS#1 header names the algorithm — the word `RSA`
+appears in it — and a PKCS#8 header does not.
 
-```
------BEGIN RSA PRIVATE KEY-----
-```
-
-GitHub hands you a PKCS#1 key, so this is usually invisible. It bites when the key has
-been round-tripped through a tool that re-encodes it — `openssl genpkey`, `ssh-keygen -m
-PKCS8`, some secret managers — producing `-----BEGIN PRIVATE KEY-----` instead. Then
-`terraform plan` fails with:
+GitHub hands you PKCS#1, so this is normally invisible. It bites when the key has been
+round-tripped through something that re-encodes it: `openssl genpkey`, `ssh-keygen -m
+PKCS8`, some secret managers. Then `terraform plan` fails with
 
 ```
 Error: x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)
 ```
 
-which reads like advice and is actually the provider telling you it tried PKCS#1 and
-found PKCS#8. Convert it back:
+which reads like advice and is actually the provider saying it tried PKCS#1 and found
+PKCS#8. Convert it back:
 
 ```bash
 openssl rsa -in pkcs8-key.pem -traditional -out secrets/your-github-app.pem
 chmod 600 secrets/your-github-app.pem
-head -1 secrets/your-github-app.pem     # must say BEGIN RSA PRIVATE KEY
+head -1 secrets/your-github-app.pem       # the header should name RSA
 ```
 
-An empty or placeholder file gives a different message — `no decodeable PEM data found`.
+An empty or placeholder file gives a different message: `no decodeable PEM data found`.
+
+> Neither header is reproduced literally above, on purpose. A repository containing a
+> private-key header line is a permanent finding for every secret scanner that reads it —
+> gitleaks, trufflehog, GitHub push protection — and the usual remedy is to teach each
+> scanner an exception for the documentation file. Exceptions are how a real key
+> eventually slips past one. Describing the signature costs a sentence; excepting it
+> costs a control.
 
 ---
 
