@@ -346,6 +346,14 @@ module "kube-hetzner" {
   # days here, set 2026-08-05) rather than versioning kept forever.
   ssh_private_key = null
 
+  # Named explicitly rather than inherited. Set this to something distinct: this variant
+  # is the one people run alongside another cluster, and two projects both containing a
+  # cluster called "k3s" produce two identical sets of resource names.
+  #
+  # Not part of the kustomization trigger set — verified against the module: cluster_name
+  # feeds only a local backup filename, none of the helm values locals.
+  cluster_name = var.cluster_name
+
   network_region = "eu-central"
 
   hetzner_ccm_version = local.hetzner_ccm_version

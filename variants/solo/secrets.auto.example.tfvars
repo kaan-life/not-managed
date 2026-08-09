@@ -30,6 +30,17 @@ argocd_webhook_secret = "<openssl-rand-hex-32>"
 
 letsencrypt_email = "your@email.here"
 
+# ACME directory. NO DEFAULT — you must choose, because both defaults are wrong in ways
+# you find out late. Start on STAGING: certificates will be untrusted, but issuance is
+# rate-limit-free, so you can iterate. Switch to production only once issuance works.
+#   staging:    https://acme-staging-v02.api.letsencrypt.org/directory
+#   production: https://acme-v02.api.letsencrypt.org/directory
+acme_server = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+# Every resource is named after this. Make it distinct if this is not your only cluster.
+# cluster_name = "k3s"
+
+
 # Hostname for the ArgoCD UI/API. A DNS record for it must point at the cluster's
 # ingress load balancer, and it is also the target of the GitHub push webhook — if the
 # two ever disagree, deliveries 404 and deploys silently fall back to 180s polling.

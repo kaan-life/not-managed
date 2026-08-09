@@ -7,7 +7,9 @@ resource "kubernetes_manifest" "letsencrypt" {
     }
     spec = {
       acme = {
-        server = "https://acme-v02.api.letsencrypt.org/directory"
+        # Production or staging — an input with no default, because either default is
+        # wrong in a way you only discover later. See variable "acme_server".
+        server = var.acme_server
         email  = var.letsencrypt_email
         privateKeySecretRef = {
           name = "letsencrypt-account-key"

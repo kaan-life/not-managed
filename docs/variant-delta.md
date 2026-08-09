@@ -110,7 +110,26 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
        }
-@@ -351,11 +396,35 @@
+@@ -301,14 +346,12 @@
+   # days here, set 2026-08-05) rather than versioning kept forever.
+   ssh_private_key = null
+ 
+-  # Named explicitly rather than inherited. The value is the module's own default, so this
+-  # changes nothing today — and that is the point: the name is currently INHERITED, so a
+-  # module bump that changed the default would rename every resource in the project with
+-  # no diff here to show it. Same reasoning as initial_k3s_channel above.
++  # Named explicitly rather than inherited. Set this to something distinct: this variant
++  # is the one people run alongside another cluster, and two projects both containing a
++  # cluster called "k3s" produce two identical sets of resource names.
+   #
+   # Not part of the kustomization trigger set — verified against the module: cluster_name
+-  # feeds only a local backup filename, none of the helm values locals. So it needs no
+-  # entry in local.kustomization_trigger_fingerprint.
++  # feeds only a local backup filename, none of the helm values locals.
+   cluster_name = var.cluster_name
+ 
+   network_region = "eu-central"
+@@ -361,11 +404,35 @@
      kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
    }
  
@@ -148,7 +167,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -364,23 +433,26 @@
+@@ -374,23 +441,26 @@
        disable_ipv6 = true
      },
      {
@@ -181,7 +200,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        disable_ipv4 = true
        disable_ipv6 = true
-@@ -393,7 +465,7 @@
+@@ -403,7 +473,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -190,7 +209,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -422,7 +494,7 @@
+@@ -432,7 +502,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -199,7 +218,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -440,9 +512,33 @@
+@@ -450,9 +520,33 @@
        disable_ipv6 = true
      },
      {
@@ -234,7 +253,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -461,7 +557,7 @@
+@@ -471,7 +565,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -243,7 +262,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -488,7 +584,7 @@
+@@ -498,7 +592,7 @@
        # inserting a pool earlier re-indexes (and recreates) the egress node.
        name        = "agent-ci",
        server_type = "cx33",
@@ -252,7 +271,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -512,15 +608,36 @@
+@@ -522,15 +616,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -292,7 +311,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -575,31 +692,28 @@
+@@ -585,31 +700,28 @@
  
    automatically_upgrade_k3s = true
  
@@ -346,7 +365,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    initial_k3s_channel            = local.initial_k3s_channel
-@@ -657,6 +771,25 @@
+@@ -667,6 +779,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -372,7 +391,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -664,6 +797,27 @@
+@@ -674,6 +805,27 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    k3s_audit_policy_config = local.k3s_audit_policy
  
@@ -625,7 +644,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
 --- variants/solo/secrets.auto.example.tfvars
 +++ variants/ha/secrets.auto.example.tfvars
-@@ -70,6 +70,14 @@
+@@ -81,6 +81,14 @@
  etcd_s3_bucket     = "k3s-etcd-snapshots"
  etcd_s3_region     = "<your-s3-bucket-region>"
  
@@ -640,7 +659,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  # Firewall sources. Both are required and neither may be null — null used to be the
  # value shipped here, and it disabled the restriction entirely while still passing the
  # old validation. The values below are a working, safe default: the Kubernetes API is
-@@ -81,6 +89,13 @@
+@@ -92,6 +100,13 @@
  firewall_kube_api_source = ["100.64.0.0/10"] # Tailscale CGNAT range
  firewall_ssh_source      = ["203.0.113.7/32"] # REPLACE: your egress IP (this is TEST-NET-3, reserved for docs)
  
@@ -657,32 +676,66 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/variables.tf variants/ha/variables.tf
 --- variants/solo/variables.tf
 +++ variants/ha/variables.tf
-@@ -59,6 +59,54 @@
+@@ -59,57 +59,51 @@
    type        = string
  }
  
+-variable "acme_server" {
+-  description = <<-EOT
+-    ACME directory URL for the ClusterIssuer.
+-
+-    Production:  https://acme-v02.api.letsencrypt.org/directory
+-    Staging:     https://acme-staging-v02.api.letsencrypt.org/directory
+-
+-    DELIBERATELY NO DEFAULT, and this is the one place where "no default" is about safety
+-    rather than identity. Either default is wrong in a way that is hard to see:
+-
+-      - defaulting to PRODUCTION means every experiment, every green-field test build and
+-        every fork burns Let's Encrypt's real rate limits. They are per registered domain
+-        and per week; exhausting them takes out certificate issuance for the domain, and
+-        waiting is the only remedy.
+-      - defaulting to STAGING means a forgotten line in a tfvars file silently gives a
+-        production cluster untrusted certificates. Every browser and every client rejects
+-        them, and the configuration looks entirely correct.
 +# ─── Locations ───────────────────────────────────────────────────────────────
 +# This variant is multi-location by design, so where things go is an input rather than a
 +# constant repeated a dozen times. In the solo variant the location is a literal, because
 +# there is only one and nothing has to agree with anything.
-+
+ 
+-    An unset variable is an error, which is neither of those.
 +variable "primary_location" {
 +  description = <<-EOT
 +    Datacentre holding two of the three control planes, every agent, both load balancers
 +    and the active NAT router. This is where the cluster really lives.
-+
+ 
+-    Changing this value on a live cluster makes cert-manager register a new ACME account
+-    and reissue every certificate. Expect a burst of issuance, and do not do it casually
+-    on production.
 +    Must be inside network_region (main.tf) — "eu-central" covers the German and Finnish
 +    locations, and mixing regions is not supported by the network the module builds.
-+  EOT
-+  type        = string
+   EOT
+   type        = string
 +  default     = "nbg1"
-+  nullable    = false
-+}
-+
+   nullable    = false
+-
+-  validation {
+-    condition     = can(regex("^https://[a-z0-9.-]+/", var.acme_server))
+-    error_message = "acme_server must be an https ACME directory URL, e.g. https://acme-staging-v02.api.letsencrypt.org/directory"
+-  }
+ }
+ 
+-variable "cluster_name" {
 +variable "secondary_location" {
-+  description = <<-EOT
+   description = <<-EOT
+-    Name of the cluster. Every server, load balancer, network, placement group and
+-    firewall is named after it, so it is what you see in the cloud console.
 +    Datacentre holding the third control plane and the standby NAT router.
-+
+ 
+-    The default matches the upstream module's, which keeps existing clusters unchanged.
+-    Set it to something distinct for any cluster that is not your only one: two clusters
+-    both called "k3s", in two projects, produce two identical sets of resource names — and
+-    the only thing that then tells a human (or a script) which console they are looking at
+-    is the project selector.
 +    THE DEFAULT IS A DELIBERATE COMPROMISE, and the interesting decision in this variant.
 +    A second datacentre in the same country is a few milliseconds away; one across the
 +    continent is tens of milliseconds away. etcd pays that distance on every write that
@@ -698,21 +751,82 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +
 +    Measure before you choose. This project's own green-field build measures the RTT under
 +    etcd load and publishes the number rather than a recommendation.
+   EOT
+   type        = string
+-  default     = "k3s"
++  default     = "fsn1"
+   nullable    = false
+ 
+   validation {
+-    condition     = can(regex("^[a-z0-9-]+$", var.cluster_name))
+-    error_message = "cluster_name must be lowercase alphanumeric characters and dashes only — it becomes part of every resource name."
++    condition     = var.secondary_location != var.primary_location
++    error_message = "secondary_location must differ from primary_location — otherwise the third control plane and the standby NAT router sit in the datacentre they exist to survive the loss of."
+   }
+ }
+ 
+@@ -243,6 +237,60 @@
+   }
+ }
+ 
++variable "acme_server" {
++  description = <<-EOT
++    ACME directory URL for the ClusterIssuer.
++
++    Production:  https://acme-v02.api.letsencrypt.org/directory
++    Staging:     https://acme-staging-v02.api.letsencrypt.org/directory
++
++    DELIBERATELY NO DEFAULT, and this is the one place where "no default" is about safety
++    rather than identity. Either default is wrong in a way that is hard to see:
++
++      - defaulting to PRODUCTION means every experiment, every green-field test build and
++        every fork burns Let's Encrypt's real rate limits. They are per registered domain
++        and per week; exhausting them takes out certificate issuance for the domain, and
++        waiting is the only remedy.
++      - defaulting to STAGING means a forgotten line in a tfvars file silently gives a
++        production cluster untrusted certificates. Every browser and every client rejects
++        them, and the configuration looks entirely correct.
++
++    An unset variable is an error, which is neither of those.
++
++    Changing this value on a live cluster makes cert-manager register a new ACME account
++    and reissue every certificate. Expect a burst of issuance, and do not do it casually
++    on production.
 +  EOT
 +  type        = string
-+  default     = "fsn1"
 +  nullable    = false
 +
 +  validation {
-+    condition     = var.secondary_location != var.primary_location
-+    error_message = "secondary_location must differ from primary_location — otherwise the third control plane and the standby NAT router sit in the datacentre they exist to survive the loss of."
++    condition     = can(regex("^https://[a-z0-9.-]+/", var.acme_server))
++    error_message = "acme_server must be an https ACME directory URL, e.g. https://acme-staging-v02.api.letsencrypt.org/directory"
 +  }
 +}
 +
- variable "argocd_domain" {
-   description = <<-EOT
-     Hostname the ArgoCD web UI and API are served on, e.g. "gitops.example.com".
-@@ -312,6 +360,32 @@
++variable "cluster_name" {
++  description = <<-EOT
++    Name of the cluster. Every server, load balancer, network, placement group and
++    firewall is named after it, so it is what you see in the cloud console.
++
++    The default matches the upstream module's, which keeps existing clusters unchanged.
++    Set it to something distinct for any cluster that is not your only one: two clusters
++    both called "k3s", in two projects, produce two identical sets of resource names — and
++    the only thing that then tells a human (or a script) which console they are looking at
++    is the project selector.
++  EOT
++  type        = string
++  default     = "k3s"
++  nullable    = false
++
++  validation {
++    condition     = can(regex("^[a-z0-9-]+$", var.cluster_name))
++    error_message = "cluster_name must be lowercase alphanumeric characters and dashes only — it becomes part of every resource name."
++  }
++}
++
+ variable "utility_namespaces" {
+   type        = list(string)
+   description = "List of Kubernetes namespaces to create"
+@@ -371,6 +419,32 @@
    }
  }
  

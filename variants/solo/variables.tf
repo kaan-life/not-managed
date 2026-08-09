@@ -59,6 +59,60 @@ variable "letsencrypt_email" {
   type        = string
 }
 
+variable "acme_server" {
+  description = <<-EOT
+    ACME directory URL for the ClusterIssuer.
+
+    Production:  https://acme-v02.api.letsencrypt.org/directory
+    Staging:     https://acme-staging-v02.api.letsencrypt.org/directory
+
+    DELIBERATELY NO DEFAULT, and this is the one place where "no default" is about safety
+    rather than identity. Either default is wrong in a way that is hard to see:
+
+      - defaulting to PRODUCTION means every experiment, every green-field test build and
+        every fork burns Let's Encrypt's real rate limits. They are per registered domain
+        and per week; exhausting them takes out certificate issuance for the domain, and
+        waiting is the only remedy.
+      - defaulting to STAGING means a forgotten line in a tfvars file silently gives a
+        production cluster untrusted certificates. Every browser and every client rejects
+        them, and the configuration looks entirely correct.
+
+    An unset variable is an error, which is neither of those.
+
+    Changing this value on a live cluster makes cert-manager register a new ACME account
+    and reissue every certificate. Expect a burst of issuance, and do not do it casually
+    on production.
+  EOT
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^https://[a-z0-9.-]+/", var.acme_server))
+    error_message = "acme_server must be an https ACME directory URL, e.g. https://acme-staging-v02.api.letsencrypt.org/directory"
+  }
+}
+
+variable "cluster_name" {
+  description = <<-EOT
+    Name of the cluster. Every server, load balancer, network, placement group and
+    firewall is named after it, so it is what you see in the cloud console.
+
+    The default matches the upstream module's, which keeps existing clusters unchanged.
+    Set it to something distinct for any cluster that is not your only one: two clusters
+    both called "k3s", in two projects, produce two identical sets of resource names — and
+    the only thing that then tells a human (or a script) which console they are looking at
+    is the project selector.
+  EOT
+  type        = string
+  default     = "k3s"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.cluster_name))
+    error_message = "cluster_name must be lowercase alphanumeric characters and dashes only — it becomes part of every resource name."
+  }
+}
+
 variable "argocd_domain" {
   description = <<-EOT
     Hostname the ArgoCD web UI and API are served on, e.g. "gitops.example.com".
@@ -217,9 +271,14 @@ variable "etcd_s3_secret_key" {
 }
 
 variable "etcd_s3_bucket" {
-  description = "S3 bucket name for etcd backups"
+  description = <<-EOT
+    S3 bucket holding etcd snapshots. No default: the previous one ("k3s-etcd-snapshots")
+    was the same name for everybody, and a shared name is one misconfigured endpoint away
+    from two clusters writing snapshots over each other. Naming your own is one line and
+    removes the class of accident entirely.
+  EOT
   type        = string
-  default     = "k3s-etcd-snapshots"
+  nullable    = false
 }
 
 variable "etcd_s3_region" {

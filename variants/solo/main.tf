@@ -301,6 +301,16 @@ module "kube-hetzner" {
   # days here, set 2026-08-05) rather than versioning kept forever.
   ssh_private_key = null
 
+  # Named explicitly rather than inherited. The value is the module's own default, so this
+  # changes nothing today — and that is the point: the name is currently INHERITED, so a
+  # module bump that changed the default would rename every resource in the project with
+  # no diff here to show it. Same reasoning as initial_k3s_channel above.
+  #
+  # Not part of the kustomization trigger set — verified against the module: cluster_name
+  # feeds only a local backup filename, none of the helm values locals. So it needs no
+  # entry in local.kustomization_trigger_fingerprint.
+  cluster_name = var.cluster_name
+
   network_region = "eu-central"
 
   hetzner_ccm_version = local.hetzner_ccm_version
