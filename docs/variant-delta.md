@@ -48,7 +48,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  locals {
    # kured ships tolerations for control-plane/master only; without the egress toleration it
    # never runs on the egress node, that node never reboots, and MicroOS transactional-update
-@@ -80,16 +111,19 @@
+@@ -108,16 +139,19 @@
    #
    # KEEP IN SYNC: adding any module input that appears in the module's kustomization trigger
    # set WITHOUT adding it here re-opens exactly this failure, and it fails silent.
@@ -74,7 +74,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    hetzner_ccm_merge_values = <<-EOT
  env:
    HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP:
-@@ -97,7 +131,7 @@
+@@ -125,7 +159,7 @@
    HCLOUD_LOAD_BALANCERS_DISABLE_PRIVATE_INGRESS:
      value: "true"
    HCLOUD_LOAD_BALANCERS_LOCATION:
@@ -83,7 +83,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    EOT
    longhorn_merge_values    = <<-EOT
  defaultSettings:
-@@ -195,13 +229,24 @@
+@@ -223,13 +257,24 @@
        - level: Metadata
    EOT
  
@@ -110,7 +110,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
        }
-@@ -301,14 +346,12 @@
+@@ -329,14 +374,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -129,7 +129,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -361,11 +404,35 @@
+@@ -389,11 +432,35 @@
      kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
    }
  
@@ -167,7 +167,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -374,23 +441,26 @@
+@@ -402,23 +469,26 @@
        disable_ipv6 = true
      },
      {
@@ -200,7 +200,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        disable_ipv4 = true
        disable_ipv6 = true
-@@ -403,7 +473,7 @@
+@@ -431,7 +501,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -209,7 +209,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -432,7 +502,7 @@
+@@ -460,7 +530,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -218,7 +218,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -450,9 +520,33 @@
+@@ -478,9 +548,33 @@
        disable_ipv6 = true
      },
      {
@@ -253,7 +253,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -471,7 +565,7 @@
+@@ -499,7 +593,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -262,7 +262,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -498,7 +592,7 @@
+@@ -526,7 +620,7 @@
        # inserting a pool earlier re-indexes (and recreates) the egress node.
        name        = "agent-ci",
        server_type = "cx33",
@@ -271,7 +271,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -522,15 +616,36 @@
+@@ -550,15 +644,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -311,7 +311,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -585,31 +700,28 @@
+@@ -613,31 +728,28 @@
  
    automatically_upgrade_k3s = true
  
@@ -365,7 +365,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    initial_k3s_channel            = local.initial_k3s_channel
-@@ -667,6 +779,25 @@
+@@ -695,6 +807,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -391,7 +391,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -674,6 +805,27 @@
+@@ -702,13 +833,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    k3s_audit_policy_config = local.k3s_audit_policy
  
@@ -418,7 +418,18 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +
    automatically_upgrade_os = true
    #
-   preinstall_exec = [
+-  # Runs on every node after the k3s install command. This is what makes a REBUILT control
+-  # plane safe: it arrives with the skip already in place, so it never re-applies the addon
+-  # and never resets the annotation. Changing this changes cloud-init, which the module puts
+-  # in ignore_changes (modules/host/main.tf) — so it does NOT rebuild running nodes; it only
+-  # takes effect on new ones, which is precisely the set of nodes that need it.
++  # Runs on every node after the k3s install command. In this variant that matters more
++  # than in solo: there are THREE control planes, each with its own manifests directory and
++  # its own deploy controller, so a skip file placed only on the first one leaves two nodes
++  # able to reset the annotation. Every node gets it here.
+   postinstall_exec = [
+     local.local_storage_skip_cmd,
+   ]
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
 --- variants/solo/README.md
 +++ variants/ha/README.md

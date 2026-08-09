@@ -5,25 +5,29 @@
 # itself default. With both marked, a PVC that omits storageClassName gets whichever the
 # API server picks — and on 2026-07-03 that put invoicing-postgres on local-path.
 #
-# WHY A ONE-SHOT PATCH IS NOT ENOUGH, measured 2026-08-08:
-# the annotation is owned by field manager "deploy@k3s-control-plane-...", i.e. k3s's addon
-# deploy controller, which re-applies /var/lib/rancher/k3s/server/manifests/local-storage.yaml
-# on every k3s START — not only on a version upgrade, as previously assumed. So ANY k3s
-# restart resets it: a config change, a node reboot, a crash. The kustomize hook
-# (local.storageclass_default_fix_cmd) repairs it at apply time and is still worth keeping,
-# but it only runs when the hook is re-triggered, so between applies the cluster silently
-# drifts back into the incident condition. That is exactly how it regressed after the
-# 2026-07-03 fix, and again after the audit-logging restart on 2026-08-08.
+# THE ROOT CAUSE IS NOW FIXED ELSEWHERE, AND THIS RESOURCE CHANGED JOB.
 #
-# WHAT THIS RESOURCE BUYS: the annotation becomes DECLARED state. Terraform now owns it,
-# so `terraform plan` reports the drift the moment k3s resets it, instead of nobody
-# noticing until a PVC lands in the wrong place. That is the "post-apply assertion" the
-# G1 audit asked for under P0-1.
+# The annotation used to be owned by field manager "deploy@k3s-control-plane-...", k3s's
+# addon deploy controller, which re-applies its packaged local-storage manifest on every
+# k3s START — not on version upgrades, as was assumed for a long time, but on every start.
+# So any restart reset it: a config change, a node reboot, a crash. Measured most recently
+# at 2026-08-09T01:21:26Z, inside kured's reboot window.
 #
-# WHAT IT DOES NOT BUY: continuous reconciliation. Between a k3s restart and the next
-# terraform run the cluster is still in the bad state. The durable fix is an in-cluster
-# reconciler (a tiny controller or an ArgoCD-managed patch), which belongs in the GitOps
-# repository, not here — see the follow-up note in the plan.
+# That controller no longer manages local-path at all. main.tf drops a
+# local-storage.yaml.skip file (both on running nodes and, via postinstall_exec, on every
+# new one), and extra-manifests/local-path-provisioner.yaml.tpl is a vendored copy of the
+# manifest with the annotation already "false". k3s' own maintainers recommend this shape
+# of fix — see k3s-io/k3s#4083 and scripts/vendor-local-path.sh.
+#
+# SO WHAT IS THIS RESOURCE FOR NOW? It is an ASSERTION, not a repair. Nothing should ever
+# change this annotation again, and if something does — a manual kubectl patch, a future
+# k3s that ignores the skip, a re-enabled addon — `terraform plan` says so. It costs one
+# API read per plan and it is the only thing that would notice.
+#
+# WHAT IT STILL DOES NOT BUY: continuous reconciliation. It reports at plan time, not in
+# real time. Alerting on "the newest default StorageClass is not the CSI one" belongs in
+# monitoring, and a class-less PVC submitted with --dry-run=server is the cheapest probe
+# for it — that tests the outcome rather than the mechanism.
 resource "kubernetes_annotations" "local_path_not_default" {
   api_version = "storage.k8s.io/v1"
   kind        = "StorageClass"
