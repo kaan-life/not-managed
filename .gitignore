@@ -1,0 +1,41 @@
+# Repository-root ignores. Each variant directory carries its own .gitignore as well —
+# it has to, because a variant is meant to be copied out on its own and must stay safe
+# once it is somewhere else.
+
+# Provider and module caches. 300 MB per variant, and they are rebuilt by `terraform init`.
+**/.terraform/*
+
+# Filled-in backend configuration. This is the file that names a state store, so a
+# committed one points every fork at somebody else's state. Only the .example is tracked.
+backend.hcl
+!backend.hcl.example
+
+# Real variable files. Only the .example is tracked.
+*.tfvars
+*.tfvars.json
+!*.example.tfvars
+!*.example.tfvars.json
+
+# State, locks, plans, crash logs
+*.tfstate
+*.tfstate.*
+*.tflock
+*.tfplan
+crash.log
+crash.*.log
+
+# Anything that could carry a credential
+*.pem
+!*.pem.example
+*_kubeconfig.yaml
+*secret*.yaml
+*secret*.yml
+*secrets*.yaml
+*secrets*.yml
+hcloud-projects.conf
+
+# Editors and byte-code
+.idea/
+*.iml
+__pycache__/
+*.py[cod]

@@ -1,0 +1,97 @@
+*secret.yaml
+
+############################################
+# IntelliJ IDEA
+############################################
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+# JetBrains local history / caches (usually under .idea, but keep these too)
+.idea_modules/
+
+############################################
+# Python
+############################################
+# Byte-compiled caches from scripts/. Untracked so far only by luck: nothing in this
+# file matched them, so a single `python3 scripts/...` run in a working tree left
+# scripts/__pycache__/ staged-able and one `git add -A` away from being published.
+__pycache__/
+*.py[cod]
+
+############################################
+# Terraform
+############################################
+# Local .terraform directories
+**/.terraform/*
+
+# Filled-in remote state backend configuration. providers.tf declares a PARTIAL
+# backend, so this file is what points `terraform init` at a state store — it names
+# someone's real bucket. Only the .example next to it is tracked.
+backend.hcl
+!backend.hcl.example
+
+# Terraform state files (NEVER commit)
+*.tfstate
+*.tfstate.*
+
+# Terraform native lock files (written to S3 in remote backend, but guard against local copies)
+*.tflock
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Debug / trace logs (may contain credentials in provider HTTP responses)
+tf-debug.log
+TF_LOG*
+*.tflog
+
+# CLI configuration files (can contain credentials)
+.terraformrc
+terraform.rc
+
+# Variable files that often contain secrets
+*.tfvars
+*.tfvars.json
+
+# But allow example/non-secret var files if you use them
+!*.example.tfvars
+!*.example.tfvars.json
+
+# Terraform plan outputs
+*.tfplan
+*.plan
+
+# Override files (rare, but usually local)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Lock file: recommended to commit for consistent provider versions
+# (so we do NOT ignore it)
+# .terraform.lock.hcl
+
+############################################
+# Secrets: Terraform, YAML and PEM files
+############################################
+# Terraform Secrets
+secrets.auto.tfvars
+secrets.auto.tfvars.json
+
+# Project registry for the destructive scripts: maps project names to API-token
+# fingerprints. Hashes only, but it still describes your projects — keep it local.
+hcloud-projects.conf
+*_kubeconfig.yaml
+*_kustomization_backup.yaml
+
+# Secret YAML files
+*secret*.yaml
+*secret*.yml
+*secrets*.yaml
+*secrets*.yml
+
+# PEM files (private keys, certificates)
+*.pem

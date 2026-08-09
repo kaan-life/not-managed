@@ -1,0 +1,744 @@
+# Variant delta
+
+**Generated — do not edit.** Regenerate with `./tools/gen-variant-delta.sh`.
+
+The exact difference between `variants/solo` and `variants/ha`. The two directories are
+independent copies by design (ADR-0007), so this file is how divergence stays visible: a
+change to one variant that should have been made to both shows up here, in the same pull
+request that caused it.
+
+Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripped.
+
+```diff
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/main.tf variants/ha/main.tf
+--- variants/solo/main.tf
++++ variants/ha/main.tf
+@@ -1,3 +1,34 @@
++# ─────────────────────────────────────────────────────────────────────────────
++#  VARIANT: ha
++#
++#  The same architecture as variants/solo, at a different operating point. Read
++#  docs/variant-delta.md for the exact diff; this header is the intent behind it.
++#
++#  What changes, and what each change actually buys:
++#    3 control planes (2 + 1 across two locations) — losing one no longer stops
++#      scheduling, ArgoCD sync and every kubectl. You still operate etcd.
++#    3 general agents instead of 2 — enough capacity to EMPTY one, which is what
++#      makes a real drain possible. On 2026-08-05 the two-node variant cordoned a
++#      node for 2.5 hours with 8 pods Pending because there was nowhere to put them.
++#    system_upgrade_use_drain = true — reversing the solo mitigation, because the
++#      headroom above is the precondition that was missing.
++#    A redundant NAT router — in solo it is a single point of failure that takes
++#      SSH and the kube-API path with it.
++#    A cluster autoscaler with room to grow instead of a single spare node.
++#
++#  What it does NOT buy, stated here so nobody has to discover it:
++#    - No managed control-plane SLA. There is nobody to page.
++#    - No node auto-repair. A NotReady node stays NotReady until a human acts.
++#    - Hetzner has no availability zones inside a location, so "multi-location"
++#      here means multi-DATACENTRE — a different, larger latency domain than the
++#      zones EKS/GKE/AKS spread across. That is a trade, not an upgrade.
++#  docs/managed-k8s-parity.md has the full accounting.
++#
++#  NEVER APPLIED TO PRODUCTION by its authors. Its failure modes are proven only
++#  as far as the green-field build in the project's M4 phase proved them, and the
++#  README says which those are.
++# ─────────────────────────────────────────────────────────────────────────────
++
+ locals {
+   # kured ships tolerations for control-plane/master only; without the egress toleration it
+   # never runs on the egress node, that node never reboots, and MicroOS transactional-update
+@@ -80,16 +111,19 @@
+   #
+   # KEEP IN SYNC: adding any module input that appears in the module's kustomization trigger
+   # set WITHOUT adding it here re-opens exactly this failure, and it fails silent.
+-  hetzner_ccm_version      = "v1.22.0"
+-  hetzner_csi_version      = "v2.22.0"
+-  kured_version            = "1.21.0"
+-  cert_manager_version     = "v1.20.3"
+-  traefik_version          = "41.0.0"
+-  cilium_merge_values      = <<-EOT
++  hetzner_ccm_version  = "v1.22.0"
++  hetzner_csi_version  = "v2.22.0"
++  kured_version        = "1.21.0"
++  cert_manager_version = "v1.20.3"
++  traefik_version      = "41.0.0"
++  cilium_merge_values  = <<-EOT
+ encryption:
+   enabled: true
+   type: wireguard
+   EOT
++  # HCLOUD_LOAD_BALANCERS_LOCATION must equal load_balancer_location below. If they
++  # disagree, the CCM provisions Service-type LoadBalancers in a different datacentre from
++  # the nodes they front, and every request pays a cross-site hop that nothing reports.
+   hetzner_ccm_merge_values = <<-EOT
+ env:
+   HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP:
+@@ -97,7 +131,7 @@
+   HCLOUD_LOAD_BALANCERS_DISABLE_PRIVATE_INGRESS:
+     value: "true"
+   HCLOUD_LOAD_BALANCERS_LOCATION:
+-    value: "nbg1"
++    value: "${var.primary_location}"
+   EOT
+   longhorn_merge_values    = <<-EOT
+ defaultSettings:
+@@ -195,13 +229,24 @@
+       - level: Metadata
+   EOT
+ 
++  # max_nodes is a COST CEILING, not a capacity wish. min_nodes = 0 means the idle bill is
++  # unchanged, but an autoscaler with no upper bound has an unbounded monthly cost, and
++  # "it only scales when it needs to" is not a budget.
++  #
++  # The arithmetic, from measured Hetzner prices (see docs/managed-k8s-parity.md):
++  # this variant idles at roughly 1.40x the solo variant. A cx33 is about EUR 10.27/month
++  # gross, so every point of max_nodes adds up to 0.13x. Three is 1.81x worst case. The
++  # project's own stop condition is 2.5x, which is reached at max_nodes = 8 — so eight is
++  # a hard ceiling with a reason behind it, not a round number.
++  #
++  # Raise it only together with the budget line it consumes.
+   autoscaler_nodepools = [
+     {
+       name        = "autoscaled"
+       server_type = "cx33"
+-      location    = "nbg1"
++      location    = var.primary_location
+       min_nodes   = 0
+-      max_nodes   = 1
++      max_nodes   = 3
+       labels = {
+         "node.kubernetes.io/role" = "autoscaled"
+       }
+@@ -351,11 +396,35 @@
+     kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
+   }
+ 
++  # Three control planes, split 2 + 1 across two locations.
++  #
++  # WHY THREE AND NOT TWO. etcd needs a strict majority to accept writes. Two members
++  # have a majority of two, so losing either one stops the API — two control planes are
++  # strictly worse than one, because there are twice as many things that can fail and no
++  # tolerance for either. Three tolerates one loss. Four tolerates one loss and costs more.
++  #
++  # WHY 2 + 1 AND NOT 1 + 1 + 1. With one member per location, losing the location holding
++  # a member costs you a third of the quorum and you survive. That sounds better, and for
++  # etcd it is worse: every write must be acknowledged by a majority, so with members
++  # spread evenly across three sites every single write crosses the network twice. With
++  # 2 + 1 the majority can be formed entirely inside the primary location, so the common
++  # case never leaves it — and losing the primary location still costs you the cluster,
++  # which is the honest trade being made here.
++  #
++  # WHAT THIS DOES NOT SURVIVE: losing var.primary_location. Two of three members live
++  # there. If surviving the loss of an entire datacentre is the requirement, this topology
++  # is the wrong one and no amount of tuning fixes it — that needs 1 + 1 + 1 and an
++  # acceptance of per-write cross-site latency.
++  #
++  # The third member gets its OWN placement group. A spread placement group guarantees
++  # different physical hosts within a location; across locations the guarantee is already
++  # implied and Hetzner has no reason to honour one group in two datacentres. Sharing a
++  # group would be, at best, a request that means nothing.
+   control_plane_nodepools = [
+     {
+-      name        = "control-plane-nbg1-1",
++      name        = "control-plane-1",
+       server_type = "cx23",
+-      location    = "nbg1",
++      location    = var.primary_location,
+       labels      = [],
+       taints      = [],
+       count       = 1
+@@ -364,23 +433,26 @@
+       disable_ipv6 = true
+     },
+     {
+-      name        = "control-plane-nbg1-2",
++      name        = "control-plane-2",
+       server_type = "cx23",
+-      location    = "nbg1",
++      location    = var.primary_location,
+       labels      = [],
+       taints      = [],
+-      count       = 0
++      count       = 1
+ 
+       disable_ipv4 = true
+       disable_ipv6 = true
+     },
+     {
+-      name        = "control-plane-hel1",
++      name        = "control-plane-3",
+       server_type = "cx23",
+-      location    = "hel1",
++      location    = var.secondary_location,
+       labels      = [],
+       taints      = [],
+-      count       = 0
++      count       = 1
++
++      # Its own spread group — see the note above.
++      placement_group = "secondary"
+ 
+       disable_ipv4 = true
+       disable_ipv6 = true
+@@ -393,7 +465,7 @@
+       # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
+       # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
+       server_type = "cx33",
+-      location    = "nbg1",
++      location    = var.primary_location,
+       labels      = [],
+       taints      = [],
+       count       = 1
+@@ -422,7 +494,7 @@
+     {
+       name        = "agent-large",
+       server_type = "cx33",
+-      location    = "nbg1",
++      location    = var.primary_location,
+       labels      = [],
+       taints      = [],
+       count       = 1
+@@ -440,9 +512,33 @@
+       disable_ipv6 = true
+     },
+     {
++      # THE THIRD GENERAL AGENT — the reason system_upgrade_use_drain can be true below.
++      #
++      # Two schedulable nodes cannot be reduced to one without somewhere for the pods to
++      # go, so "drain a node" was not an operation the solo variant could perform. Adding
++      # a third is not about total capacity; it is about being able to empty one. Sized
++      # identically to agent-large so any pod that fits there fits here.
++      name        = "agent-large-2",
++      server_type = "cx33",
++      location    = var.primary_location,
++      labels      = [],
++      taints      = [],
++      count       = 1
++
++      kubelet_args = [
++        "kube-reserved=cpu=100m,memory=256Mi,ephemeral-storage=2Gi",
++        "system-reserved=cpu=200m,memory=256Mi,ephemeral-storage=2Gi",
++        "eviction-hard=memory.available<200Mi,nodefs.available<10%,imagefs.available<10%",
++        "enforce-node-allocatable=pods",
++      ]
++
++      disable_ipv4 = true
++      disable_ipv6 = true
++    },
++    {
+       name        = "storage",
+       server_type = "cx33",
+-      location    = "nbg1",
++      location    = var.primary_location,
+       labels = [
+         "node.kubernetes.io/server-usage=storage"
+       ],
+@@ -461,7 +557,7 @@
+     {
+       name        = "egress",
+       server_type = "cx23",
+-      location    = "nbg1",
++      location    = var.primary_location,
+       labels = [
+         "node.kubernetes.io/role=egress"
+       ],
+@@ -488,7 +584,7 @@
+       # inserting a pool earlier re-indexes (and recreates) the egress node.
+       name        = "agent-ci",
+       server_type = "cx33",
+-      location    = "nbg1",
++      location    = var.primary_location,
+       labels = [
+         "node.kubernetes.io/role=ci"
+       ],
+@@ -512,15 +608,36 @@
+   ]
+ 
+   load_balancer_type     = "lb11"
+-  load_balancer_location = "nbg1"
++  load_balancer_location = var.primary_location
+ 
++  # Redundant NAT router. In the solo variant this is one server, and it is the most
++  # consequential single point of failure in that design: it carries ALL egress, and with
++  # control_plane_lb_enable_public_interface = false it also carries the forwarded kube-API
++  # port. Losing it takes out cluster egress and the SSH path at the same time, which is
++  # also the path you would use to fix it.
++  #
++  # With redundancy the module builds two routers with a keepalived VIP and puts the
++  # standby in standby_location, so the pair does not share a datacentre.
++  #
++  # CONSEQUENCE WORTH KNOWING BEFORE YOU NEED IT: after a failover, egress leaves from the
++  # standby's location and therefore from a DIFFERENT public IP. Anything that allowlists
++  # this cluster's egress address by IP — a payment provider, a partner API, a database
++  # firewall — must allowlist both addresses, or the failover trades an outage for a
++  # subtler one. Both primary IPs are stable resources, so both are knowable up front.
+   nat_router = {
+     server_type       = "cx23"
+-    location          = "nbg1"
++    location          = var.primary_location
+     enable_sudo       = false
+-    enable_redundancy = false # set true + standby_location for HA
++    enable_redundancy = true
++    standby_location  = var.secondary_location
+   }
+ 
++  # Redundancy is not free of credentials: the keepalived pair moves the floating IP by
++  # calling the Hetzner API, so a token lives ON the routers — the only hosts here with a
++  # public interface. Use a SEPARATE token from hcloud_token so it can be revoked on its
++  # own. See variable "nat_router_hcloud_token".
++  nat_router_hcloud_token = var.nat_router_hcloud_token
++
+   enable_delete_protection = {
+     floating_ip   = true
+     load_balancer = true
+@@ -575,31 +692,28 @@
+ 
+   automatically_upgrade_k3s = true
+ 
+-  # false = cordon during a k3s upgrade, do not drain. This is a small-cluster setting
+-  # and it comes from an incident on 2026-08-05.
+-  #
+-  # With true, the system-upgrade-controller tries to move every pod off a node before
+-  # upgrading it. A cluster this size cannot do that: only TWO nodes accept general
+-  # workloads (the control plane, CI and egress pools are all tainted), and the other one
+-  # runs at around 93% memory. The 17 pods on the node being upgraded did not fit, so the
+-  # drain never completed, the upgrade job hit its deadline (DeadlineExceeded), and the
+-  # node was left CORDONED — for 150 minutes, with 8 pods Pending. One of those pods was
+-  # Alertmanager, which is why no alert fired about any of it.
+-  #
+-  # The module documents this on system_upgrade_enable_eviction: "Disable this on small
+-  # clusters to avoid system upgrades hanging since pods resisting eviction keep node
+-  # unschedulable forever."
+-  #
+-  # With false the node keeps running through the upgrade: cordon -> update k3s in place
+-  # -> uncordon. Pods experience an agent restart instead of a migration, which is not a
+-  # new class of disruption here — kured already runs with --drain-timeout=5m
+-  # --force-reboot=true and stops those same pods every night.
+-  #
+-  # This is a mitigation, not a fix. The fix is enough capacity to empty a node: a third
+-  # worker, either static or via the autoscaler configured below. NEVER delete the
+-  # zero-count pool above to make room in the list — agent pools are keyed by index, and
+-  # removing one rebuilds every pool after it.
+-  system_upgrade_use_drain = false
++  # true = actually move pods off a node before upgrading it. The solo variant sets this
++  # to FALSE, and that difference is the single clearest illustration of what this variant
++  # is for.
++  #
++  # Why solo has to say false: with only two nodes accepting general workloads, a drain
++  # has nowhere to put the evicted pods. On 2026-08-05 that left a node cordoned for 150
++  # minutes with 8 pods Pending — one of them Alertmanager, which is why nothing alerted.
++  # The module warns about exactly this on system_upgrade_enable_eviction: "Disable this
++  # on small clusters to avoid system upgrades hanging since pods resisting eviction keep
++  # node unschedulable forever."
++  #
++  # Why this variant can say true: three general agents plus an autoscaler pool. Emptying
++  # one leaves two, and Pending pods bring up a fourth in under three minutes (measured).
++  #
++  # THE PRECONDITION IS CAPACITY, NOT THIS FLAG. Setting true on a cluster whose remaining
++  # nodes cannot absorb the evicted pods reproduces the 2026-08-05 incident exactly. If
++  # you shrink the agent pools below, change this back to false in the same commit.
++  #
++  # Still not surge: k3s' system-upgrade-controller never adds a node before removing one,
++  # and a failed upgrade has no automatic rollback. Headroom emulates surge; it does not
++  # implement it, and the runbook must cover manual recovery.
++  system_upgrade_use_drain = true
+ 
+   system_upgrade_schedule_window = local.system_upgrade_schedule_window
+   initial_k3s_channel            = local.initial_k3s_channel
+@@ -657,6 +771,25 @@
+   control_planes_custom_config = {
+     etcd-snapshot-schedule-cron = "0 */4 * * *"
+     etcd-snapshot-retention     = 42
++
++    # etcd across two datacentres. The defaults (100 ms heartbeat, 1000 ms election
++    # timeout) assume members share a LAN. They do not here, and etcd's failure mode when
++    # they are too tight is not a crash: it is a leader election storm — members declare
++    # the leader dead because a heartbeat was late, elect a new one, and repeat. The API
++    # then stalls for seconds at a time with nothing obviously broken.
++    #
++    # etcd's own guidance is heartbeat >= round-trip time and election timeout at least
++    # 10x heartbeat. The values below are sized for a same-country hop, which is why
++    # var.secondary_location defaults to a nearby datacentre rather than a distant one.
++    #
++    # THESE NUMBERS ARE NOT UNIVERSAL. Measure the actual RTT between your two locations
++    # and raise them if it exceeds ~30 ms; a longer election timeout also means a longer
++    # outage when a leader genuinely dies, so this is a trade to make deliberately and not
++    # a value to inflate for safety.
++    etcd-arg = [
++      "heartbeat-interval=250",
++      "election-timeout=2500",
++    ]
+   }
+ 
+   # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
+@@ -664,6 +797,27 @@
+   # it in the fingerprint would re-run the kured patch for no reason.
+   k3s_audit_policy_config = local.k3s_audit_policy
+ 
++  # ── Cluster access identity: deliberately NOT configured ────────────────────
++  #
++  # Managed Kubernetes maps cloud IAM identities to RBAC, so access is per-person,
++  # auditable and revocable. Here, access is a static client certificate in the kubeconfig:
++  # no per-user identity, and no revocation short of rotating the CA.
++  #
++  # kube-hetzner 2.19.2 exposes `authentication_config` (k3s structured authentication),
++  # so wiring an external OIDC provider is a supported one-liner:
++  #
++  #   authentication_config = file("${path.module}/authentication-config.yaml")
++  #
++  # It is left off on purpose, and the reason is a bootstrap circularity worth
++  # understanding before you turn it on: if the identity provider runs INSIDE this
++  # cluster, then losing the cluster loses the way to log in and fix it. If you enable
++  # OIDC, either host the IdP elsewhere or keep the certificate kubeconfig as a
++  # break-glass credential — which means keeping the revocation problem you were trying
++  # to solve, for one account.
++  #
++  # Workload identity (IRSA / GKE WI / AKS managed identity) has no equivalent at all.
++  # Pods here keep long-lived secrets. That is structural, not an omission.
++
+   automatically_upgrade_os = true
+   #
+   preinstall_exec = [
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
+--- variants/solo/README.md
++++ variants/ha/README.md
+@@ -1,123 +1,110 @@
+-# Variant: solo
++# Variant: ha
+ 
+-> **Draft quickstart.** Written before the green-field build that verifies it. Every step
+-> below is either exercised in the running cluster this variant was derived from, or
+-> reasoned from the code — but the sequence as a whole has not yet been run start to
+-> finish by someone with no prior knowledge. That run is what turns this into the real
+-> README, with measured timings and whatever manual repairs it needed.
+-
+-One control plane, two general-purpose agents, a dedicated CI node, a dedicated egress
+-node, and a NAT router. The Kubernetes API is reachable only over a Tailscale tailnet;
+-no node has a public IPv4 except the NAT router.
+-
+-**This is the variant that runs a real workload.** Everything in it exists because
+-something happened: the pinned CSI version is there because an older one reformatted a
+-production database volume during a node failover; the kured tolerations patch is there
+-because two nodes silently stopped rebooting for three days; `system_upgrade_use_drain`
+-is `false` because a drain with nowhere to put the pods cordoned a node for two and a
+-half hours. The comments explain each one. Read them before deleting a line.
++> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
++> **never run a production workload.** It was authored in this repository, derived from
++> the variant that does. It is verified as far as a green-field build verifies anything:
++> it boots, it passes its smoke tests, a control-plane node was killed and etcd was
++> restored. Everything beyond that — behaviour under real load, over months, during an
++> incident — is unproven, and this README will say so until it isn't.
++
++Three control planes across two datacentres, three general-purpose agents, a cluster
++autoscaler, a dedicated CI node, a dedicated egress node, and a redundant NAT router.
++Same architecture as `variants/solo`, different operating point.
+ 
+ ## Choose this variant if
+ 
+-- one operator, one cluster, and a control-plane restart is an inconvenience rather than
+-  an incident;
+-- the bill matters (this is roughly 70 % of the cost of the `ha` variant before any
+-  autoscaling);
+-- you can tolerate the API being unavailable while a single control plane reboots — pods
+-  keep running, but scheduling, self-healing, GitOps sync and every `kubectl` stop.
+-
+-Choose `variants/ha` instead if you need the API to survive losing a node or a
+-datacentre, or if you need to be able to drain a worker. See the root README for the
+-side-by-side table.
+-
+-## Prerequisites
+-
+-| | |
+-|---|---|
+-| Terraform | ≥ 1.10 (`required_version = "~> 1.10"`) |
+-| Packer | required for the first build only — `init.sh` builds the MicroOS snapshot |
+-| A Hetzner Cloud project | with a read-write API token |
+-| S3-compatible object storage | two buckets: Terraform state and etcd snapshots. **Enable versioning on the state bucket.** |
+-| A Tailscale tailnet | plus an auth key; the kube-API is served only there |
+-| A GitHub organisation | with an App (for ArgoCD repo access) and an OAuth App (for SSO) |
+-| A companion GitOps repository | see `docs/adr/0008` — or set `SKIP_TEKTON_BOOTSTRAP=1` |
+-| A domain | with DNS you control, for the ArgoCD ingress |
+-| `kubectl`, `hcloud`, `python3`, `git` | on the machine running Terraform |
+-
+-## Build
++- the Kubernetes API has to survive losing a node — with one control plane, a reboot
++  stops scheduling, self-healing, GitOps sync and every `kubectl`, even though running
++  pods carry on;
++- you need to be able to **drain** a worker, for an upgrade or to move a workload. That
++  is not a configuration flag, it is spare capacity: `solo` cannot do it, and this
++  variant can only do it because of the third agent;
++- one datacentre going away should cost you availability, not the cluster.
++
++Choose `variants/solo` if none of those are true. This one costs about **1.4×** as much
++before any autoscaling, and roughly 1.8× with the autoscaler at its configured ceiling.
++Three control planes are three things to patch, not one.
++
++## What differs from `solo`, and what each difference buys
++
++| Change | Buys | Costs |
++|---|---|---|
++| 3 control planes, split 2 + 1 across locations | API survives losing one node; quorum survives losing one member | +2 × cx23; you still operate etcd, and losing the *primary* location still costs the cluster |
++| 3 general agents instead of 2 | a drain has somewhere to put the pods | +1 × cx33 |
++| `system_upgrade_use_drain = true` | pods move off a node before it is upgraded, instead of riding out a restart | only safe while the headroom above exists |
++| Autoscaler `max_nodes = 3` | Pending pods get a node in under three minutes | up to +3 × cx33 when it fires |
++| Redundant NAT router | egress and the forwarded API port survive losing one router | +1 × cx23, **and egress leaves from a different public IP after failover** |
++| `etcd-arg` heartbeat/election tuning | etcd tolerates the hop between datacentres without election storms | a longer election timeout means a longer stall when a leader genuinely dies |
++
++`docs/variant-delta.md` is the exact diff. `docs/cost-comparison.md` has the measured
++prices behind the numbers above.
++
++## The decision this variant asks you to make
++
++`secondary_location` defaults to a datacentre in the same country as `primary_location`,
++not a distant one, and that is the interesting choice in the whole design.
++
++Geographic separation and etcd performance pull in opposite directions. A second site
++across the continent survives a regional event; it also puts tens of milliseconds between
++etcd members, and every write that needs the third member pays it. Get the heartbeat and
++election timeouts wrong for that distance and the failure is not a crash — it is a leader
++election storm, where members declare the leader dead over a late heartbeat, elect a new
++one, and repeat, while the API stalls for seconds at a time and nothing looks broken.
++
++The default trades regional survivability for single-digit latency: a different building,
++different power, different network, a few milliseconds away. **Measure your own
++round-trip time before choosing differently**, and raise the `etcd-arg` values in
++`main.tf` to match if you do.
++
++## Prerequisites and build
++
++Identical to `variants/solo` — same tools, same accounts, same two-pass build for the
++tailnet address (`docs/RUNBOOK.md` §2). Only the two location inputs are extra, and both
++have defaults:
+ 
+ ```bash
+-# 1. Inputs. Every variable without a default must be set — there are 25 of them, and
+-#    the identifiers among them deliberately have no defaults so that a fork cannot
+-#    inherit somebody else's domain, bucket or GitHub team.
+-cp secrets.auto.example.tfvars secrets.auto.tfvars
+-chmod 600 secrets.auto.tfvars
+-$EDITOR secrets.auto.tfvars
+-
+-# 2. Which state store to use. providers.tf declares a PARTIAL backend and names no
+-#    bucket, so init fails until you say. Create the bucket first, with versioning.
++cp secrets.auto.example.tfvars secrets.auto.tfvars && chmod 600 secrets.auto.tfvars
+ cp backend.hcl.example backend.hcl
+-$EDITOR backend.hcl
+-
+-# 3. The GitHub App private key, at the path named in secrets.auto.tfvars.
+-cp ~/Downloads/your-app.private-key.pem secrets/your-github-app.pem
+-chmod 600 secrets/your-github-app.pem
+-
+-# 4. An ssh-agent holding the private half of ssh_public_key_path. The key is
+-#    deliberately never given to Terraform — it would be written into the state in
+-#    cleartext — so provisioners get it from the agent instead.
++$EDITOR secrets.auto.tfvars backend.hcl
+ eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
+-
+-# 5. Build.
+ bash init.sh
+ ```
+ 
+-### The build takes two passes, and the first one looks like a failure
+-
+-`kube_api_tailnet_address` is the control plane's address on your tailnet. Tailscale
+-assigns it when the node first joins, so on a cluster that does not exist yet **you
+-cannot know it in advance** — and it is required in the API server's certificate.
++> **Use a different `key` in `backend.hcl` from any other cluster.** Two clusters sharing
++> a state key will fight over it and destroy each other's resources. The backend is
++> partial precisely so this is a decision you make rather than inherit.
+ 
+-Set a placeholder inside `100.64.0.0/10`, leave
+-`control_plane_lb_enable_public_interface = true` in `main.tf`, run `init.sh`, then read
+-the assigned address, put it in `secrets.auto.tfvars`, set the flag to `false`, and
+-`terraform apply` again. Full procedure with the reasoning: **`docs/RUNBOOK.md` §2.**
++### Extra step: verify quorum before you trust it
+ 
+-Skipping this is why a green-field build fails on the first apply.
+-
+-## Day two
++Three control planes that never formed a quorum look exactly like three control planes
++that did, until the first failure. After the build:
+ 
+ ```bash
+-terraform init -backend-config=backend.hcl
+-terraform plan     # read it. it is the only review that catches silent drift
+-terraform apply
++kubectl get nodes -l node-role.kubernetes.io/control-plane
++# expect 3, all Ready, across two locations
++
++kubectl -n kube-system exec -it <a control-plane pod> -- \
++  etcdctl endpoint status --cluster -w table
++# expect 3 members, exactly one leader, and RAFT INDEX values within a few of each other
+ ```
+ 
+-`bash apply.sh` is the same thing with Packer and the phased apply skipped.
++A member that is persistently behind on raft index is a member that will not save you.
++
++## What this variant still does not give you
++
++Fewer than `solo`, but the list is not empty, and every item is structural rather than an
++omission:
+ 
+-Two things in this configuration are hashed into Terraform state, so **editing a comment
+-is not always free**: the `helm_release` values block (comments inside it are chart
+-values) and anything under `extra-manifests/` or `scripts/` that is fingerprinted. A
+-`plan` after a comment-only edit may legitimately show work. That is the mechanism doing
+-its job — it exists so that editing a script actually deploys it.
+-
+-## Tearing down
+-
+-`destroy.sh` and `remove-protection.sh` both require `--project <name>`, prove the API
+-token belongs to that project, default to a dry run, and demand a typed confirmation.
+-`restore-protection.sh` puts delete protection back. Run them against a throwaway
+-project only.
+-
+-## What this variant does not give you
+-
+-Stated plainly, because a reader coming from EKS/GKE/AKS will assume otherwise:
+-
+-- **No managed control-plane SLA** — there is nobody to page.
+-- **No node auto-repair.** A NotReady node stays NotReady until a human acts.
+-- **No drain headroom.** With two schedulable nodes there is nowhere to move pods to,
+-  which is why `system_upgrade_use_drain = false`.
+-- **A single NAT router** carrying all egress and the forwarded API port.
+-- **etcd is yours.** Backups run; the restore is a manual procedure.
++- **No managed control-plane SLA.** Three control planes are three you maintain.
++- **No node auto-repair.** The autoscaler replaces nodes it manages; the static pools
++  have no health-driven replacement anywhere in kube-hetzner 2.19.2. A NotReady static
++  node stays NotReady until a human acts. Alert on it.
++- **Not true surge upgrades.** k3s' system-upgrade-controller never adds a node before
++  removing one, and a failed upgrade has no automatic rollback. Headroom emulates surge.
++- **No availability zones.** Hetzner has datacentres, not zones — a different, larger
++  latency domain than the ~1 ms zones managed Kubernetes spreads across.
++- **No workload identity.** Pods keep long-lived secrets.
++- **One cloud account** remains a single point of failure for everything in it.
+ 
+-`docs/managed-k8s-parity.md` accounts for all of it, row by row, with what it would cost
+-to close each gap.
++`docs/managed-k8s-parity.md` accounts for all twelve capabilities, including the six no
++self-hosted stack can match.
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
+--- variants/solo/secrets.auto.example.tfvars
++++ variants/ha/secrets.auto.example.tfvars
+@@ -70,6 +70,14 @@
+ etcd_s3_bucket     = "k3s-etcd-snapshots"
+ etcd_s3_region     = "<your-s3-bucket-region>"
+ 
++# ─── Locations (this variant only) ───────────────────────────────────────────
++# Both have defaults, so you can leave them out. Read the descriptions in variables.tf
++# before you change secondary_location: it is where the third etcd member lives, and the
++# distance between the two locations is paid on writes.
++#
++# primary_location   = "nbg1"   # two control planes, all agents, both LBs, active NAT
++# secondary_location = "fsn1"   # third control plane, standby NAT router
++
+ # Firewall sources. Both are required and neither may be null — null used to be the
+ # value shipped here, and it disabled the restriction entirely while still passing the
+ # old validation. The values below are a working, safe default: the Kubernetes API is
+@@ -81,6 +89,13 @@
+ firewall_kube_api_source = ["100.64.0.0/10"] # Tailscale CGNAT range
+ firewall_ssh_source      = ["203.0.113.7/32"] # REPLACE: your egress IP (this is TEST-NET-3, reserved for docs)
+ 
++# Required by this variant because the NAT routers are redundant: the keepalived pair
++# calls the Hetzner API to move the floating IP on failover, so this token is written onto
++# machines with a public interface. Use a SEPARATE token from hcloud_token above — not
++# because it is less powerful (Hetzner tokens cannot be scoped) but so it can be revoked
++# without taking the rest of the cluster's automation with it.
++nat_router_hcloud_token = "<a second 64-character Hetzner API token>"
++
+ tailscale_auth_key = "<your-tailscale-auth-key>"
+ 
+ # The control-plane node's tailnet address. Serves double duty: certificate SAN and the
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/variables.tf variants/ha/variables.tf
+--- variants/solo/variables.tf
++++ variants/ha/variables.tf
+@@ -59,6 +59,54 @@
+   type        = string
+ }
+ 
++# ─── Locations ───────────────────────────────────────────────────────────────
++# This variant is multi-location by design, so where things go is an input rather than a
++# constant repeated a dozen times. In the solo variant the location is a literal, because
++# there is only one and nothing has to agree with anything.
++
++variable "primary_location" {
++  description = <<-EOT
++    Datacentre holding two of the three control planes, every agent, both load balancers
++    and the active NAT router. This is where the cluster really lives.
++
++    Must be inside network_region (main.tf) — "eu-central" covers the German and Finnish
++    locations, and mixing regions is not supported by the network the module builds.
++  EOT
++  type        = string
++  default     = "nbg1"
++  nullable    = false
++}
++
++variable "secondary_location" {
++  description = <<-EOT
++    Datacentre holding the third control plane and the standby NAT router.
++
++    THE DEFAULT IS A DELIBERATE COMPROMISE, and the interesting decision in this variant.
++    A second datacentre in the same country is a few milliseconds away; one across the
++    continent is tens of milliseconds away. etcd pays that distance on every write that
++    needs the third member, and a leader election crossing it is where "the API froze for
++    ten seconds" comes from. Geographic separation buys blast-radius reduction and costs
++    latency, and the two pull in opposite directions.
++
++    The default picks a nearby datacentre: different building, different power, different
++    network, single-digit RTT. If your requirement is surviving a regional event rather
++    than a datacentre event, choose a distant location — and then RAISE the etcd
++    heartbeat and election timeouts in control_planes_custom_config to match the measured
++    round-trip time, or you will trade a rare outage for a frequent one.
++
++    Measure before you choose. This project's own green-field build measures the RTT under
++    etcd load and publishes the number rather than a recommendation.
++  EOT
++  type        = string
++  default     = "fsn1"
++  nullable    = false
++
++  validation {
++    condition     = var.secondary_location != var.primary_location
++    error_message = "secondary_location must differ from primary_location — otherwise the third control plane and the standby NAT router sit in the datacentre they exist to survive the loss of."
++  }
++}
++
+ variable "argocd_domain" {
+   description = <<-EOT
+     Hostname the ArgoCD web UI and API are served on, e.g. "gitops.example.com".
+@@ -312,6 +360,32 @@
+   }
+ }
+ 
++variable "nat_router_hcloud_token" {
++  description = <<-EOT
++    Hetzner API token that the NAT routers themselves use to move the floating IP on
++    failover. Required whenever nat_router.enable_redundancy is true, which this variant
++    sets — the keepalived pair cannot reassign the address without calling the API.
++
++    GIVE IT ITS OWN TOKEN, not a copy of hcloud_token. This value is written onto the NAT
++    router VMs, which are the only machines in the cluster with a public interface and the
++    ones an attacker reaches first. Hetzner tokens cannot be scoped to a resource, so a
++    copy of the main token on that host is a full read-write project credential sitting on
++    the edge. A separate token is not less powerful — it is separately REVOCABLE, so
++    rotating it does not take the whole cluster's automation down with it.
++
++    Treat a compromise of this token as a compromise of the project, and rotate it on the
++    same schedule as any other edge credential.
++  EOT
++  type        = string
++  sensitive   = true
++  nullable    = false
++
++  validation {
++    condition     = length(var.nat_router_hcloud_token) == 64
++    error_message = "nat_router_hcloud_token must be a 64-character Hetzner API token. The provider rejects anything else, but only once it is already building — this catches it at plan time."
++  }
++}
++
+ variable "tailscale_auth_key" {
+   description = "Tailscale auth key for node registration"
+   type        = string
+```

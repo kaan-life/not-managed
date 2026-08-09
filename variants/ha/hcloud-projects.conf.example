@@ -1,0 +1,36 @@
+# Project registry for the destructive scripts (remove-protection.sh, restore-protection.sh,
+# destroy.sh). Copy this file to hcloud-projects.conf — which is gitignored and must never
+# be committed — or, better, let the scripts write it for you:
+#
+#   ./remove-protection.sh --project test --register
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# A Hetzner Cloud API token carries no project name, so a script cannot ask which project
+# it is pointed at. Without that, `--project test` would be a comment rather than a check.
+# Each line binds a project name to the SHA-256 fingerprint (first 12 hex characters) of
+# the token that belongs to it. The scripts fingerprint the token they loaded and abort if
+# it does not match the project named on the command line.
+#
+# The fingerprint is a one-way hash: this file cannot be used to recover a token, and it is
+# safe to print in logs. It is gitignored anyway, on the principle that a file mapping your
+# project names to your credentials is nobody else's business.
+#
+# Format:  [!]<project-name>:<sha256-of-token, first 12 hex chars>
+#
+# A leading '!' marks the project PROTECTED. Scripts that destroy or weaken resources
+# (remove-protection.sh, destroy.sh) refuse a protected project outright — there is no
+# flag, no --force and no --apply that overrides it. Scripts that only move in the safe
+# direction (restore-protection.sh) keep working.
+#
+# Mark a project protected:
+#   ./remove-protection.sh --project prod --protect
+#
+# Un-marking it is deliberately NOT a flag: edit this file by hand and delete the '!'.
+# A safety rail you can remove with a flag is a safety rail you remove by accident, and
+# the hand edit is what makes the intent explicit.
+#
+# Example (fingerprints below are made up):
+#
+# !prod:1a2b3c4d5e6f      <- production: destructive scripts refuse this outright
+# test:0f9e8d7c6b5a       <- throwaway project used for the green-field proof

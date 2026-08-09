@@ -1,0 +1,33 @@
+# Terraform remote state backend — WHICH state store to use.
+#
+# providers.tf declares `backend "s3" {}` with no bucket in it, deliberately: a backend
+# block cannot reference var.*, so anything written there is baked into the repository
+# for everyone who clones it. This file is the missing half, and it is gitignored.
+#
+#   cp backend.hcl.example backend.hcl
+#   $EDITOR backend.hcl
+#   terraform init -backend-config=backend.hcl
+#
+# Credentials do NOT go here. The S3 backend reads AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY from the environment; init.sh and destroy.sh export them from
+# tf_state_access_key / tf_state_secret_key in secrets.auto.tfvars.
+#
+# The values below are Hetzner Object Storage shaped. Any S3-compatible store works —
+# the protocol flags (use_path_style, skip_*) live in providers.tf because they are the
+# same for every S3-compatible endpoint.
+
+# The bucket must already exist; Terraform will not create the store it keeps state in.
+# Create it with versioning enabled: a corrupted or truncated state overwrite is
+# recoverable from a previous version and is not recoverable from anything else.
+bucket = "your-terraform-state-bucket"
+
+# Path within the bucket. One key per cluster. Two clusters sharing a key will fight
+# over the same state and destroy each other's resources.
+key = "terraform.tfstate"
+
+# For Hetzner Object Storage the region is the location code of the bucket.
+region = "fsn1"
+
+endpoints = {
+  s3 = "https://fsn1.your-objectstorage.com"
+}
