@@ -469,3 +469,41 @@ kubectl get sc local-path -o json --show-managed-fields   # manager must not be 
 
 That last one is the real proof: while `deploy@…` still appears as a field manager, k3s is
 still in charge and the fix has not taken.
+
+### Proving the skip still works, without restarting k3s
+
+The deploy controller re-scans every 15 seconds, but a re-apply needs the manifest's
+**content checksum** to change — `deploy()` returns early when the checksum matches what
+the Addon recorded. So `touch`ing the file proves nothing: it moves the timestamp past the
+first gate and then stops at the checksum. Appending a comment line does change the
+checksum, and that is a valid trigger.
+
+Run the negative control first, or a passing result means nothing:
+
+```bash
+M=/var/lib/rancher/k3s/server/manifests
+sc() { kubectl get sc local-path \
+  -o jsonpath='{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}'; }
+
+# NEGATIVE CONTROL — skip removed, content changed. Expect "true" within ~45s.
+mv $M/local-storage.yaml.skip $M/.parked && echo '# probe' >> $M/local-storage.yaml
+sleep 45; sc
+
+# restore, then repair the annotation through Terraform so the field manager is right
+mv $M/.parked $M/local-storage.yaml.skip
+terraform apply -target=kubernetes_annotations.local_path_not_default
+
+# POSITIVE — skip in place, same change. Expect "false".
+echo '# probe' >> $M/local-storage.yaml
+sleep 45; sc
+```
+
+Restore the manifest afterwards (k3s rewrites it on the next start anyway).
+
+Measured on 2026-08-09: negative `true`, positive `false`.
+
+**What this does and does not prove.** It exercises the checksum-mismatch path. A real k3s
+restart takes the *force* path, where the checksum comparison is skipped entirely — but
+both reach the same `shouldSkipFile` check, and that check runs before either, so the
+result carries. Confirming it after a genuine restart still costs nothing and is worth
+doing the next time one happens.
