@@ -66,7 +66,7 @@ chmod 600 secrets/your-github-app.pem
 # 4. An ssh-agent holding the private half of ssh_public_key_path. The key is
 #    deliberately never given to Terraform — it would be written into the state in
 #    cleartext — so provisioners get it from the agent instead.
-eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
+eval "$(ssh-agent -s)" && ssh-add <the private half of ssh_public_key_path>
 
 # 5. Build.
 bash init.sh

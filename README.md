@@ -24,7 +24,7 @@ served only over a Tailscale tailnet.
 | NAT router | 1 — single point of failure for egress *and* the API path | 2, keepalived VIP, second datacentre |
 | Cost, idle | **€76** / month | **€107** / month (1.40×) |
 | Cost, autoscaler at ceiling | — | €138 / month (1.81×) |
-| Proven by | **running a real workload** | a green-field build with a control-plane kill and an etcd restore |
+| Proven by | **running a real workload** | static checks only so far — never booted; see its README |
 
 **Choose `solo`** if you are one operator, the bill matters, and a control-plane reboot is
 an inconvenience rather than an incident.
@@ -76,6 +76,13 @@ docs/variant-delta.md         generated diff between the two variants
 
 ## Status
 
-This tree is being prepared for publication and is **not finished**. Still to come:
-licence and attribution files, CI, and the documentation set. Both variant READMEs are
-drafts marked as such.
+This tree is being prepared for publication and is **not finished**.
+
+- `variants/solo` is a de-identified copy of a configuration that runs a real workload.
+- `variants/ha` has **never been applied**. It validates and plans cleanly against an
+  empty state; it has not been booted, and neither the control-plane kill nor the etcd
+  restore has been executed. That is the next step, and until it happens the availability
+  claims are design intentions.
+- Still to come: attribution files (`NOTICE`, `THIRD_PARTY.md`), CI,
+  `docs/managed-k8s-parity.md`, and the finished documentation set. Both variant READMEs
+  are drafts marked as such.

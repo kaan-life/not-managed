@@ -403,7 +403,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
 --- variants/solo/README.md
 +++ variants/ha/README.md
-@@ -1,123 +1,110 @@
+@@ -1,123 +1,114 @@
 -# Variant: solo
 +# Variant: ha
  
@@ -424,11 +424,15 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -is `false` because a drain with nowhere to put the pods cordoned a node for two and a
 -half hours. The comments explain each one. Read them before deleting a line.
 +> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
-+> **never run a production workload.** It was authored in this repository, derived from
-+> the variant that does. It is verified as far as a green-field build verifies anything:
-+> it boots, it passes its smoke tests, a control-plane node was killed and etcd was
-+> restored. Everything beyond that — behaviour under real load, over months, during an
-+> incident — is unproven, and this README will say so until it isn't.
++> **never been applied to anything.** It was authored in this repository, derived from the
++> variant that runs a real workload, and at the time of writing it has been verified only
++> by static means: `terraform validate`, and a plan that resolves the full 46-resource
++> graph against an empty state.
++>
++> It has **not** been booted. The control-plane kill and the etcd restore that this design
++> exists to survive have **not** been executed. Until they have, treat every availability
++> claim here as a design intention rather than a measurement — and read the `solo` variant
++> if you need something whose failure modes are known.
 +
 +Three control planes across two datacentres, three general-purpose agents, a cluster
 +autoscaler, a dedicated CI node, a dedicated egress node, and a redundant NAT router.
@@ -533,7 +537,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -#    deliberately never given to Terraform — it would be written into the state in
 -#    cleartext — so provisioners get it from the agent instead.
 +$EDITOR secrets.auto.tfvars backend.hcl
- eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
+ eval "$(ssh-agent -s)" && ssh-add <the private half of ssh_public_key_path>
 -
 -# 5. Build.
  bash init.sh
