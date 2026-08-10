@@ -37,16 +37,27 @@ work fails instead of succeeding.
 
 This repository has **two**, and which one applies depends on the file you touched.
 
-- **Apache-2.0** — everything, by default.
-- **MIT** — the files derived from MIT-licensed upstream code, listed in `NOTICE` and
-  carrying an `SPDX-License-Identifier: MIT` header of their own. Today that is
-  `variants/*/packer/hcloud-microos-snapshots.pkr.hcl` and `variants/*/main.tf`.
+**The rule: Apache-2.0 unless the file's own `SPDX-License-Identifier` header says
+otherwise.** `LICENSE` sets the default, so a file with no header is Apache-2.0.
 
-So a patch to a Packer template is a contribution under MIT, and a patch to
-`variants/ha/argocd.tf` is a contribution under Apache-2.0. Check the SPDX header at the
-top of the file you are editing; it is authoritative, and it is there so this question has
-a mechanical answer rather than a conversational one. The reasoning is in
-`docs/adr/0001-apache-2-0-license.md`.
+Exactly one file is the exception, in each variant:
+
+- `variants/*/packer/hcloud-microos-snapshots.pkr.hcl` — **MIT**, because it is
+  effectively a copy of upstream's template with one change. A patch to it is a
+  contribution under MIT.
+
+`main.tf` is attributed in `NOTICE` but is **Apache-2.0**: it shares 30 of 249 substantive
+unique lines with upstream's `kube.tf.example`, which is derivation at the level of
+configuration rather than copying. The attribution is there out of caution; the licence is
+the project's own. Its header says so, with the reasoning.
+
+Two files carry no header at all — `scripts/apply-argocd-appset.py` and
+`scripts/apply-github-secrets.py`. Their content is hashed into Terraform state, so adding
+a comment to either one re-runs it against a live cluster. They are Apache-2.0 by the
+default rule above, and the comment beside the hash in `github.tf` explains it.
+
+The reasoning behind all of this is in `docs/adr/0001-apache-2-0-license.md` and the
+measurements are in `docs/adr/0005-attribution-matrix.md`.
 
 ## Two variants, one repository
 

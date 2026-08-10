@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # Remove Hetzner delete-protection from floating IPs, volumes and load balancers so that
 # `terraform destroy` can complete. main.tf sets enable_delete_protection on all three,
 # which is deliberate: it is what stops an accidental destroy. This script is the

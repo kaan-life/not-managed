@@ -1,3 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Apache-2.0, not MIT, even though this file is attributed in NOTICE. It shares 30 of 249
+# substantive unique lines with upstream's kube.tf.example (~12 %) — derivation at the
+# level of configuration rather than copying, which is why the attribution is there out of
+# caution while the licence stays the project's own. The near-verbatim file is the Packer
+# template, and that one carries an MIT identifier. See ADR-0001 and ADR-0005.
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  VARIANT: ha
 #

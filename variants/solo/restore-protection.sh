@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # Re-enable Hetzner delete-protection on floating IPs, volumes and load balancers.
 #
 # The counterpart to remove-protection.sh. Before this existed, the only script in the

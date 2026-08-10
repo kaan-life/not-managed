@@ -13,7 +13,10 @@ Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripp
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/main.tf variants/ha/main.tf
 --- variants/solo/main.tf
 +++ variants/ha/main.tf
-@@ -1,3 +1,34 @@
+@@ -6,6 +6,37 @@
+ # caution while the licence stays the project's own. The near-verbatim file is the Packer
+ # template, and that one carries an MIT identifier. See ADR-0001 and ADR-0005.
+ 
 +# ─────────────────────────────────────────────────────────────────────────────
 +#  VARIANT: ha
 +#
@@ -48,7 +51,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  locals {
    # kured ships tolerations for control-plane/master only; without the egress toleration it
    # never runs on the egress node, that node never reboots, and MicroOS transactional-update
-@@ -108,16 +139,19 @@
+@@ -116,16 +147,19 @@
    #
    # KEEP IN SYNC: adding any module input that appears in the module's kustomization trigger
    # set WITHOUT adding it here re-opens exactly this failure, and it fails silent.
@@ -74,7 +77,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    hetzner_ccm_merge_values = <<-EOT
  env:
    HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP:
-@@ -125,7 +159,7 @@
+@@ -133,7 +167,7 @@
    HCLOUD_LOAD_BALANCERS_DISABLE_PRIVATE_INGRESS:
      value: "true"
    HCLOUD_LOAD_BALANCERS_LOCATION:
@@ -83,7 +86,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    EOT
    longhorn_merge_values    = <<-EOT
  defaultSettings:
-@@ -223,13 +257,24 @@
+@@ -231,13 +265,24 @@
        - level: Metadata
    EOT
  
@@ -110,7 +113,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
        }
-@@ -329,14 +374,12 @@
+@@ -337,14 +382,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -129,7 +132,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -389,11 +432,35 @@
+@@ -397,11 +440,35 @@
      kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
    }
  
@@ -167,7 +170,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -402,23 +469,26 @@
+@@ -410,23 +477,26 @@
        disable_ipv6 = true
      },
      {
@@ -200,7 +203,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        disable_ipv4 = true
        disable_ipv6 = true
-@@ -431,7 +501,7 @@
+@@ -439,7 +509,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -209,7 +212,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -460,7 +530,7 @@
+@@ -468,7 +538,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -218,7 +221,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -478,9 +548,33 @@
+@@ -486,9 +556,33 @@
        disable_ipv6 = true
      },
      {
@@ -253,7 +256,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -499,7 +593,7 @@
+@@ -507,7 +601,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -262,7 +265,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -526,7 +620,7 @@
+@@ -534,7 +628,7 @@
        # inserting a pool earlier re-indexes (and recreates) the egress node.
        name        = "agent-ci",
        server_type = "cx33",
@@ -271,7 +274,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -550,15 +644,36 @@
+@@ -558,15 +652,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -311,7 +314,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -613,31 +728,28 @@
+@@ -621,31 +736,28 @@
  
    automatically_upgrade_k3s = true
  
@@ -365,7 +368,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    initial_k3s_channel            = local.initial_k3s_channel
-@@ -695,6 +807,25 @@
+@@ -703,6 +815,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -391,7 +394,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -702,13 +833,33 @@
+@@ -710,13 +841,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    k3s_audit_policy_config = local.k3s_audit_policy
  
@@ -687,7 +690,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/variables.tf variants/ha/variables.tf
 --- variants/solo/variables.tf
 +++ variants/ha/variables.tf
-@@ -59,57 +59,51 @@
+@@ -61,57 +61,51 @@
    type        = string
  }
  
@@ -776,7 +779,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  }
  
-@@ -243,6 +237,60 @@
+@@ -245,6 +239,60 @@
    }
  }
  
@@ -837,7 +840,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  variable "utility_namespaces" {
    type        = list(string)
    description = "List of Kubernetes namespaces to create"
-@@ -371,6 +419,32 @@
+@@ -373,6 +421,32 @@
    }
  }
  

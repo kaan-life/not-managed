@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 resource "kubernetes_manifest" "letsencrypt" {
   manifest = {
     apiVersion = "cert-manager.io/v1"

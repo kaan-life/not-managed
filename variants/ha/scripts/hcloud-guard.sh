@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # Shared safety guard for scripts that mutate Hetzner Cloud resources.
 #
 # WHY THIS EXISTS

@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # Regenerate extra-manifests/local-path-provisioner.yaml.tpl from k3s upstream.
 #
 #   ./scripts/vendor-local-path.sh v1.33.13+k3s2          # write the template

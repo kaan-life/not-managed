@@ -1,3 +1,14 @@
+# SPDX-License-Identifier: MIT
+#
+# MIT rather than the project's Apache-2.0, and that is deliberate. This file is
+# effectively a copy of the packer-template of the same name from
+# kube-hetzner/terraform-hcloud-kube-hetzner v2.19.2 — it differs in 18 lines out of
+# roughly 210, and the difference is SHA256 verification of the downloaded images.
+# Relicensing a near-verbatim MIT file as Apache-2.0 is permitted but would obscure where
+# it came from. Upstream's LICENSE carries the MIT permission text with no copyright
+# holder line, so there is none to reproduce here; NOTICE attributes by project, URL and
+# pinned version and reproduces the permission text verbatim. See ADR-0001 and ADR-0005.
+
 /*
  * Creates a MicroOS snapshot for Kube-Hetzner
  */

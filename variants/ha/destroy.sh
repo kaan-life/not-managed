@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # Tear the cluster down, in the order the providers require.
 #
 # ONLY run this against a throwaway project.

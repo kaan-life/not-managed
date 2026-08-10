@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 locals {
   all_namespaces = concat(var.app_namespaces, var.utility_namespaces)
 }

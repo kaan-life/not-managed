@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 variable "hcloud_token" {
   sensitive = true
 }

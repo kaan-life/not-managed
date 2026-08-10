@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # Exactly one StorageClass may be marked default. This cluster keeps ending up with two.
 #
 # hcloud-volumes (CSI, replicated, survives a node loss) is the intended default.

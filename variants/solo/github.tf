@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 resource "terraform_data" "github_secrets" {
   triggers_replace = {
     pem_hash        = filesha256("${path.module}/${var.github_app_private_key_path}")
@@ -8,6 +10,13 @@ resource "terraform_data" "github_secrets" {
     # Same reasoning as the PEM hash above, applied to the script that reads it: an
     # edit to apply-github-secrets.py was previously invisible to Terraform and so
     # was never rolled out.
+    #
+    # SIDE EFFECT WORTH KNOWING BEFORE YOU EDIT THAT FILE: this hash makes every byte of
+    # it load-bearing, including comments. That is why the two Python helpers are the only
+    # source files in this repository without an SPDX header — adding one would replace
+    # this terraform_data and re-run the script against a live cluster for a licence
+    # comment. They are Apache-2.0 like everything else that carries no header; LICENSE
+    # says so. Add the headers with the next change that is going to apply anyway.
     script_hash = filesha256("${path.module}/scripts/apply-github-secrets.py")
   }
 

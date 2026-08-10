@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 locals {
   # Single source of truth for the ArgoCD hostname. Used by the Helm values below
   # (global.domain, configs.cm.url, server.ingress.hostname) AND by the GitHub

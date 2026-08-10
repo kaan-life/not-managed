@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # Usage:
 #   bash init.sh              # Fresh install: Packer snapshot + multi-phase apply
 #   bash init.sh --apply-only # Day-2 changes: skip Packer + phased apply, run one full apply
