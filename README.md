@@ -67,6 +67,7 @@ Read the comments before deleting a line. Each one is a description of what brea
 ```
 variants/solo/        complete root configuration — the stack that runs in production
 variants/ha/          complete root configuration — the HA reference
+docs/ARCHITECTURE.md  why the shape is the shape, and what each choice costs
 docs/adr/             the decisions, and what was rejected
 docs/RUNBOOK.md       procedures that are not expressible as configuration
 docs/managed-k8s-parity.md    twelve capabilities, measured against EKS/GKE/AKS
@@ -93,6 +94,7 @@ This tree is being prepared for publication and is **not finished**.
   in it was exercised by hand, each one against input it must reject as well as input it
   must accept — but no commit has yet triggered GitHub Actions on this tree, so there is no
   green build to point at and none is claimed.
-- Still to come: `docs/ARCHITECTURE.md`, and the finished documentation set. Both variant
-  READMEs are drafts marked as such, and their quickstarts have not been walked end to end
-  by anyone starting from an empty account.
+- Still to come: the finished documentation set. Both variant READMEs are drafts marked as
+  such, and their quickstarts have not been walked end to end by anyone starting from an
+  empty account — so the boot time, the real cost and the manual repairs a first run needs
+  are not in them yet.
