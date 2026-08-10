@@ -5,7 +5,8 @@
 # hcloud-volumes (CSI, replicated, survives a node loss) is the intended default.
 # local-path (k3s local-storage addon, node-local, LOST when the node dies) also marks
 # itself default. With both marked, a PVC that omits storageClassName gets whichever the
-# API server picks — and on 2026-07-03 that put invoicing-postgres on local-path.
+# API server picks — and on 2026-07-03 that put a production database's volume on
+# local-path, i.e. on a single node's disk, with no replication and nothing to move it.
 #
 # THE ROOT CAUSE IS NOW FIXED ELSEWHERE, AND THIS RESOURCE CHANGED JOB.
 #
