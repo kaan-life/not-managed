@@ -17,6 +17,22 @@ repository.
 | [0006](0006-dco-contribution-model.md) | DCO sign-off as the contribution model | accepted | 2026-08-05 |
 | [0007](0007-two-forkable-variants-one-repository.md) | Two independently forkable root configurations in one public repository | accepted | 2026-08-08 |
 | [0008](0008-gitops-companion-repository.md) | The reference architecture is two repositories; the GitOps repo is published too | accepted | 2026-08-08 |
+| 0009 † | No SealedSecret ciphertext is ever published; every sealed secret ships as a template | accepted | 2026-08-09 |
+| 0010 † | The published GitOps repository is a reference subset built around one environment | accepted | 2026-08-09 |
+| 0011 † | Apache-2.0 for the GitOps repository; nothing upstream is vendored | accepted | 2026-08-09 |
+
+† ADR-0009 through ADR-0011 were recorded on 2026-08-09 as the decision gate for open-sourcing the
+companion GitOps repository, which ADR-0008 committed to. They are numbered in this sequence
+because ADR-0008 is, so that no two records in this architecture share a number — but they govern
+the *other* repository, and they ship with **its** publication, not with this one's, which is why
+`scripts/export-public-tree.sh` lists all three under EXCLUDE.
+
+**They are named, not linked, and that is deliberate.** This file is exported to the public tree
+while those three records are not, so a link here resolves in the private repository and is dead in
+the published one. Their filenames are `0009-sealed-secret-templates-no-ciphertext.md`,
+`0010-gitops-reference-subset.md` and `0011-gitops-licence-and-attribution.md`; in a checkout that
+has them, they sit beside this file. Anything added to this table that the export does not carry
+belongs in the same shape.
 
 ADR-0007 was recorded on 2026-08-08, when the objective changed from publishing one artefact to
 publishing two variants — `variants/solo/` (the stack in production) and `variants/ha/` (what a
