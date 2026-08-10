@@ -949,8 +949,8 @@ module "kube-hetzner" {
   #   2. read the assigned address, set the variable, apply again. The cert is reissued
   #      with the new SAN and the public interface can then be closed.
   # Skipping pass 1 is why a green-field build used to fail outright on this line.
-  additional_tls_sans       = [var.kube_api_tailnet_address]
-  kubeconfig_server_address = var.kube_api_tailnet_address
+  additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
+  kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
 
   # Close the public control-plane LB permanently: this removes the load balancer's
   # public interface entirely. NOTE: with a nat_router present, the module turns on
@@ -958,7 +958,10 @@ module "kube-hetzner" {
   # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
   # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
   # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
-  control_plane_lb_enable_public_interface = false
+  # Open ONLY during pass 1 of a green-field build (var.bootstrap_phase); closed for
+  # every apply after it. The default false means an operator who never thinks about
+  # this flag gets the closed state.
+  control_plane_lb_enable_public_interface = var.bootstrap_phase
 
   cilium_merge_values = local.cilium_merge_values
 

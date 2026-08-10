@@ -655,6 +655,46 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
+@@ -792,18 +943,12 @@
+   #
+   # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
+   # Tailscale when the control plane first joins the tailnet, so it cannot be known in
+-  # advance. Build in two passes — see var.bootstrap_phase and docs/RUNBOOK.md:
+-  #   1. terraform apply -var bootstrap_phase=true — no tailnet SAN, and the control-plane
+-  #      LB keeps its public interface so the apply can reach the API at all;
+-  #   2. read the assigned address, set kube_api_tailnet_address, apply again. The cert is
+-  #      reissued with the new SAN and the public interface closes.
+-  #
+-  # THE FLAG IS NEW AND THE REASON IS EMBARRASSING. This comment described those two
+-  # passes for months while the configuration made them impossible: the variable had no
+-  # default, so "apply with it unset" is something Terraform refuses before it plans, and
+-  # the public interface below was hardcoded false. The first green-field build ever
+-  # attempted stopped here, at plan time. Documentation that has never been executed is a
+-  # hypothesis.
++  # advance. Build in two passes — see docs/RUNBOOK.md:
++  #   1. apply with var.kube_api_tailnet_address unset and the public LB interface still
++  #      enabled, so the node can come up and register with Tailscale;
++  #   2. read the assigned address, set the variable, apply again. The cert is reissued
++  #      with the new SAN and the public interface can then be closed.
++  # Skipping pass 1 is why a green-field build used to fail outright on this line.
+   additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
+   kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
+ 
+@@ -813,11 +958,9 @@
+   # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
+   # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
+   # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
+-  #
+-  # Open ONLY during pass 1 of a green-field build (var.bootstrap_phase), because that
+-  # apply has to reach an API whose tailnet address does not exist yet. Closed for every
+-  # apply after it, which is what the default false means: an operator who never thinks
+-  # about this flag gets the closed state.
++  # Open ONLY during pass 1 of a green-field build (var.bootstrap_phase); closed for
++  # every apply after it. The default false means an operator who never thinks about
++  # this flag gets the closed state.
+   control_plane_lb_enable_public_interface = var.bootstrap_phase
+ 
+   cilium_merge_values = local.cilium_merge_values
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
 --- variants/solo/secrets.auto.example.tfvars
 +++ variants/ha/secrets.auto.example.tfvars

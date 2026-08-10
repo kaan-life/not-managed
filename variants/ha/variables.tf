@@ -453,6 +453,34 @@ variable "tailscale_auth_key" {
   sensitive   = true
 }
 
+variable "bootstrap_phase" {
+  description = <<-EOT
+    Pass 1 of a green-field build. Set true for the FIRST apply of a cluster that does not
+    exist yet, then false for every apply after it.
+
+    Why it exists: the Kubernetes API is served only over the VPN, at an address Tailscale
+    assigns when the control plane first joins the tailnet. That address therefore cannot
+    be known before the cluster exists, yet it is needed as a certificate SAN and as the
+    address kubeconfig dials. The chicken-and-egg is resolved by building in two passes:
+
+      pass 1  terraform apply -var bootstrap_phase=true
+              no tailnet SAN, and the control-plane load balancer keeps its public
+              interface so the apply can reach the API at all
+      pass 2  read the assigned address, set kube_api_tailnet_address, apply again
+              the certificate is reissued with the SAN and the public interface closes
+
+    ONE FLAG RATHER THAN TWO KNOBS, deliberately. Pass 1 needs three settings to move
+    together; as separate inputs, setting some and not others fails deep inside the apply
+    with an error that names none of them.
+
+    Leaving this true is a real exposure, not a cosmetic one: it keeps the control-plane
+    API reachable from the public internet, gated only by firewall_kube_api_source. The
+    default is false so that the safe state is the one you get by not thinking about it.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "kube_api_tailnet_address" {
   description = <<-EOT
     The control-plane node's address on your VPN. The Kubernetes API is served only over
@@ -471,13 +499,24 @@ variable "kube_api_tailnet_address" {
   type        = string
   nullable    = false
 
+  # EMPTY IS THE BOOTSTRAP VALUE, not an oversight. On pass 1 of a green-field build this
+  # address does not exist yet — the control plane has not joined the tailnet — so
+  # var.bootstrap_phase runs the cluster up without it. Both validations below therefore
+  # admit "" and stay strict about everything else.
+  #
+  # Until 2026-08-10 this variable had no default, which made the two-pass build in main.tf
+  # literally impossible: Terraform refuses to plan when a required variable is unset, so
+  # "apply with it unset" could never be executed by anybody. The first green-field run
+  # found it at plan time, before a single resource existed.
+  default = ""
+
   validation {
-    condition     = can(cidrhost("${var.kube_api_tailnet_address}/32", 0))
-    error_message = "kube_api_tailnet_address must be a bare IPv4 address without a prefix (e.g. \"100.64.0.1\")."
+    condition     = var.kube_api_tailnet_address == "" || can(cidrhost("${var.kube_api_tailnet_address}/32", 0))
+    error_message = "kube_api_tailnet_address must be a bare IPv4 address without a prefix (e.g. \"100.64.0.1\"), or empty during bootstrap_phase."
   }
 
   validation {
-    condition     = can(regex("^100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.", var.kube_api_tailnet_address)) || can(regex("^10\\.", var.kube_api_tailnet_address)) || can(regex("^172\\.(1[6-9]|2[0-9]|3[01])\\.", var.kube_api_tailnet_address)) || can(regex("^192\\.168\\.", var.kube_api_tailnet_address))
+    condition     = var.kube_api_tailnet_address == "" || can(regex("^100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.", var.kube_api_tailnet_address)) || can(regex("^10\\.", var.kube_api_tailnet_address)) || can(regex("^172\\.(1[6-9]|2[0-9]|3[01])\\.", var.kube_api_tailnet_address)) || can(regex("^192\\.168\\.", var.kube_api_tailnet_address))
     error_message = "kube_api_tailnet_address must be a private or CGNAT address — 100.64.0.0/10 (Tailscale), 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. A public address here ends up in the API server's TLS certificate and defeats the VPN-only design."
   }
 }
