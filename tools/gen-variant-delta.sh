@@ -14,6 +14,23 @@
 # run and the staleness check would be noise.
 
 set -euo pipefail
+
+# LC_ALL=C, and this is not cargo cult. `diff -r` walks the two directories in COLLATION
+# order, and collation is locale-dependent: under C, README.md sorts before every
+# lowercase name because R is byte 0x52 and a is 0x61; under en_US.UTF-8 it sorts among
+# the r's. Same inputs, same diff content, different ORDER — so the generated file differs
+# byte-for-byte depending on who ran the generator.
+#
+# Committed generated file + environment-dependent output = a staleness check that fails
+# for everybody whose locale is not the maintainer's. It fails on their first pull request,
+# for a reason they cannot see in their own diff, and the fix they will reach for is to
+# regenerate and commit the churn — which flips the failure onto the maintainer, forever.
+# A drift-guard that cries wolf is worse than no drift-guard: this file is the ONLY thing
+# standing between two hand-maintained copies and silent divergence (ADR-0007).
+#
+# Found by CI on its first ever run: generated on en_US.UTF-8, checked on a C.UTF-8 runner.
+export LC_ALL=C
+
 ROOT="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 OUT="$ROOT/docs/variant-delta.md"
 MODE="${1:-write}"

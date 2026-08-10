@@ -10,6 +10,228 @@ request that caused it.
 Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripped.
 
 ```diff
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
+--- variants/solo/README.md
++++ variants/ha/README.md
+@@ -1,123 +1,114 @@
+-# Variant: solo
++# Variant: ha
+ 
+-> **Draft quickstart.** Written before the green-field build that verifies it. Every step
+-> below is either exercised in the running cluster this variant was derived from, or
+-> reasoned from the code — but the sequence as a whole has not yet been run start to
+-> finish by someone with no prior knowledge. That run is what turns this into the real
+-> README, with measured timings and whatever manual repairs it needed.
+-
+-One control plane, two general-purpose agents, a dedicated CI node, a dedicated egress
+-node, and a NAT router. The Kubernetes API is reachable only over a Tailscale tailnet;
+-no node has a public IPv4 except the NAT router.
+-
+-**This is the variant that runs a real workload.** Everything in it exists because
+-something happened: the pinned CSI version is there because an older one reformatted a
+-production database volume during a node failover; the kured tolerations patch is there
+-because two nodes silently stopped rebooting for three days; `system_upgrade_use_drain`
+-is `false` because a drain with nowhere to put the pods cordoned a node for two and a
+-half hours. The comments explain each one. Read them before deleting a line.
++> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
++> **never been applied to anything.** It was authored in this repository, derived from the
++> variant that runs a real workload, and at the time of writing it has been verified only
++> by static means: `terraform validate`, and a plan that resolves the full 46-resource
++> graph against an empty state.
++>
++> It has **not** been booted. The control-plane kill and the etcd restore that this design
++> exists to survive have **not** been executed. Until they have, treat every availability
++> claim here as a design intention rather than a measurement — and read the `solo` variant
++> if you need something whose failure modes are known.
++
++Three control planes across two datacentres, three general-purpose agents, a cluster
++autoscaler, a dedicated CI node, a dedicated egress node, and a redundant NAT router.
++Same architecture as `variants/solo`, different operating point.
+ 
+ ## Choose this variant if
+ 
+-- one operator, one cluster, and a control-plane restart is an inconvenience rather than
+-  an incident;
+-- the bill matters (this is roughly 70 % of the cost of the `ha` variant before any
+-  autoscaling);
+-- you can tolerate the API being unavailable while a single control plane reboots — pods
+-  keep running, but scheduling, self-healing, GitOps sync and every `kubectl` stop.
+-
+-Choose `variants/ha` instead if you need the API to survive losing a node or a
+-datacentre, or if you need to be able to drain a worker. See the root README for the
+-side-by-side table.
+-
+-## Prerequisites
+-
+-| | |
+-|---|---|
+-| Terraform | ≥ 1.10 (`required_version = "~> 1.10"`) |
+-| Packer | required for the first build only — `init.sh` builds the MicroOS snapshot |
+-| A Hetzner Cloud project | with a read-write API token |
+-| S3-compatible object storage | two buckets: Terraform state and etcd snapshots. **Enable versioning on the state bucket.** |
+-| A Tailscale tailnet | plus an auth key; the kube-API is served only there |
+-| A GitHub organisation | with an App (for ArgoCD repo access) and an OAuth App (for SSO) |
+-| A companion GitOps repository | see `docs/adr/0008` — or set `SKIP_TEKTON_BOOTSTRAP=1` |
+-| A domain | with DNS you control, for the ArgoCD ingress |
+-| `kubectl`, `hcloud`, `python3`, `git` | on the machine running Terraform |
+-
+-## Build
++- the Kubernetes API has to survive losing a node — with one control plane, a reboot
++  stops scheduling, self-healing, GitOps sync and every `kubectl`, even though running
++  pods carry on;
++- you need to be able to **drain** a worker, for an upgrade or to move a workload. That
++  is not a configuration flag, it is spare capacity: `solo` cannot do it, and this
++  variant can only do it because of the third agent;
++- one datacentre going away should cost you availability, not the cluster.
++
++Choose `variants/solo` if none of those are true. This one costs about **1.4×** as much
++before any autoscaling, and roughly 1.8× with the autoscaler at its configured ceiling.
++Three control planes are three things to patch, not one.
++
++## What differs from `solo`, and what each difference buys
++
++| Change | Buys | Costs |
++|---|---|---|
++| 3 control planes, split 2 + 1 across locations | API survives losing one node; quorum survives losing one member | +2 × cx23; you still operate etcd, and losing the *primary* location still costs the cluster |
++| 3 general agents instead of 2 | a drain has somewhere to put the pods | +1 × cx33 |
++| `system_upgrade_use_drain = true` | pods move off a node before it is upgraded, instead of riding out a restart | only safe while the headroom above exists |
++| Autoscaler `max_nodes = 3` | Pending pods get a node in under three minutes | up to +3 × cx33 when it fires |
++| Redundant NAT router | egress and the forwarded API port survive losing one router | +1 × cx23, **and egress leaves from a different public IP after failover** |
++| `etcd-arg` heartbeat/election tuning | etcd tolerates the hop between datacentres without election storms | a longer election timeout means a longer stall when a leader genuinely dies |
++
++`docs/variant-delta.md` is the exact diff. `docs/cost-comparison.md` has the measured
++prices behind the numbers above.
++
++## The decision this variant asks you to make
++
++`secondary_location` defaults to a datacentre in the same country as `primary_location`,
++not a distant one, and that is the interesting choice in the whole design.
++
++Geographic separation and etcd performance pull in opposite directions. A second site
++across the continent survives a regional event; it also puts tens of milliseconds between
++etcd members, and every write that needs the third member pays it. Get the heartbeat and
++election timeouts wrong for that distance and the failure is not a crash — it is a leader
++election storm, where members declare the leader dead over a late heartbeat, elect a new
++one, and repeat, while the API stalls for seconds at a time and nothing looks broken.
++
++The default trades regional survivability for single-digit latency: a different building,
++different power, different network, a few milliseconds away. **Measure your own
++round-trip time before choosing differently**, and raise the `etcd-arg` values in
++`main.tf` to match if you do.
++
++## Prerequisites and build
++
++Identical to `variants/solo` — same tools, same accounts, same two-pass build for the
++tailnet address (`docs/RUNBOOK.md` §2). Only the two location inputs are extra, and both
++have defaults:
+ 
+ ```bash
+-# 1. Inputs. Every variable without a default must be set — there are 25 of them, and
+-#    the identifiers among them deliberately have no defaults so that a fork cannot
+-#    inherit somebody else's domain, bucket or GitHub team.
+-cp secrets.auto.example.tfvars secrets.auto.tfvars
+-chmod 600 secrets.auto.tfvars
+-$EDITOR secrets.auto.tfvars
+-
+-# 2. Which state store to use. providers.tf declares a PARTIAL backend and names no
+-#    bucket, so init fails until you say. Create the bucket first, with versioning.
++cp secrets.auto.example.tfvars secrets.auto.tfvars && chmod 600 secrets.auto.tfvars
+ cp backend.hcl.example backend.hcl
+-$EDITOR backend.hcl
+-
+-# 3. The GitHub App private key, at the path named in secrets.auto.tfvars.
+-cp ~/Downloads/your-app.private-key.pem secrets/your-github-app.pem
+-chmod 600 secrets/your-github-app.pem
+-
+-# 4. An ssh-agent holding the private half of ssh_public_key_path. The key is
+-#    deliberately never given to Terraform — it would be written into the state in
+-#    cleartext — so provisioners get it from the agent instead.
++$EDITOR secrets.auto.tfvars backend.hcl
+ eval "$(ssh-agent -s)" && ssh-add <the private half of ssh_public_key_path>
+-
+-# 5. Build.
+ bash init.sh
+ ```
+ 
+-### The build takes two passes, and the first one looks like a failure
+-
+-`kube_api_tailnet_address` is the control plane's address on your tailnet. Tailscale
+-assigns it when the node first joins, so on a cluster that does not exist yet **you
+-cannot know it in advance** — and it is required in the API server's certificate.
++> **Use a different `key` in `backend.hcl` from any other cluster.** Two clusters sharing
++> a state key will fight over it and destroy each other's resources. The backend is
++> partial precisely so this is a decision you make rather than inherit.
+ 
+-Set a placeholder inside `100.64.0.0/10`, leave
+-`control_plane_lb_enable_public_interface = true` in `main.tf`, run `init.sh`, then read
+-the assigned address, put it in `secrets.auto.tfvars`, set the flag to `false`, and
+-`terraform apply` again. Full procedure with the reasoning: **`docs/RUNBOOK.md` §2.**
++### Extra step: verify quorum before you trust it
+ 
+-Skipping this is why a green-field build fails on the first apply.
+-
+-## Day two
++Three control planes that never formed a quorum look exactly like three control planes
++that did, until the first failure. After the build:
+ 
+ ```bash
+-terraform init -backend-config=backend.hcl
+-terraform plan     # read it. it is the only review that catches silent drift
+-terraform apply
++kubectl get nodes -l node-role.kubernetes.io/control-plane
++# expect 3, all Ready, across two locations
++
++kubectl -n kube-system exec -it <a control-plane pod> -- \
++  etcdctl endpoint status --cluster -w table
++# expect 3 members, exactly one leader, and RAFT INDEX values within a few of each other
+ ```
+ 
+-`bash apply.sh` is the same thing with Packer and the phased apply skipped.
++A member that is persistently behind on raft index is a member that will not save you.
++
++## What this variant still does not give you
++
++Fewer than `solo`, but the list is not empty, and every item is structural rather than an
++omission:
+ 
+-Two things in this configuration are hashed into Terraform state, so **editing a comment
+-is not always free**: the `helm_release` values block (comments inside it are chart
+-values) and anything under `extra-manifests/` or `scripts/` that is fingerprinted. A
+-`plan` after a comment-only edit may legitimately show work. That is the mechanism doing
+-its job — it exists so that editing a script actually deploys it.
+-
+-## Tearing down
+-
+-`destroy.sh` and `remove-protection.sh` both require `--project <name>`, prove the API
+-token belongs to that project, default to a dry run, and demand a typed confirmation.
+-`restore-protection.sh` puts delete protection back. Run them against a throwaway
+-project only.
+-
+-## What this variant does not give you
+-
+-Stated plainly, because a reader coming from EKS/GKE/AKS will assume otherwise:
+-
+-- **No managed control-plane SLA** — there is nobody to page.
+-- **No node auto-repair.** A NotReady node stays NotReady until a human acts.
+-- **No drain headroom.** With two schedulable nodes there is nowhere to move pods to,
+-  which is why `system_upgrade_use_drain = false`.
+-- **A single NAT router** carrying all egress and the forwarded API port.
+-- **etcd is yours.** Backups run; the restore is a manual procedure.
++- **No managed control-plane SLA.** Three control planes are three you maintain.
++- **No node auto-repair.** The autoscaler replaces nodes it manages; the static pools
++  have no health-driven replacement anywhere in kube-hetzner 2.19.2. A NotReady static
++  node stays NotReady until a human acts. Alert on it.
++- **Not true surge upgrades.** k3s' system-upgrade-controller never adds a node before
++  removing one, and a failed upgrade has no automatic rollback. Headroom emulates surge.
++- **No availability zones.** Hetzner has datacentres, not zones — a different, larger
++  latency domain than the ~1 ms zones managed Kubernetes spreads across.
++- **No workload identity.** Pods keep long-lived secrets.
++- **One cloud account** remains a single point of failure for everything in it.
+ 
+-`docs/managed-k8s-parity.md` accounts for all of it, row by row, with what it would cost
+-to close each gap.
++`docs/managed-k8s-parity.md` accounts for all twelve capabilities, including the six no
++self-hosted stack can match.
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/main.tf variants/ha/main.tf
 --- variants/solo/main.tf
 +++ variants/ha/main.tf
@@ -433,228 +655,6 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
---- variants/solo/README.md
-+++ variants/ha/README.md
-@@ -1,123 +1,114 @@
--# Variant: solo
-+# Variant: ha
- 
--> **Draft quickstart.** Written before the green-field build that verifies it. Every step
--> below is either exercised in the running cluster this variant was derived from, or
--> reasoned from the code — but the sequence as a whole has not yet been run start to
--> finish by someone with no prior knowledge. That run is what turns this into the real
--> README, with measured timings and whatever manual repairs it needed.
--
--One control plane, two general-purpose agents, a dedicated CI node, a dedicated egress
--node, and a NAT router. The Kubernetes API is reachable only over a Tailscale tailnet;
--no node has a public IPv4 except the NAT router.
--
--**This is the variant that runs a real workload.** Everything in it exists because
--something happened: the pinned CSI version is there because an older one reformatted a
--production database volume during a node failover; the kured tolerations patch is there
--because two nodes silently stopped rebooting for three days; `system_upgrade_use_drain`
--is `false` because a drain with nowhere to put the pods cordoned a node for two and a
--half hours. The comments explain each one. Read them before deleting a line.
-+> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
-+> **never been applied to anything.** It was authored in this repository, derived from the
-+> variant that runs a real workload, and at the time of writing it has been verified only
-+> by static means: `terraform validate`, and a plan that resolves the full 46-resource
-+> graph against an empty state.
-+>
-+> It has **not** been booted. The control-plane kill and the etcd restore that this design
-+> exists to survive have **not** been executed. Until they have, treat every availability
-+> claim here as a design intention rather than a measurement — and read the `solo` variant
-+> if you need something whose failure modes are known.
-+
-+Three control planes across two datacentres, three general-purpose agents, a cluster
-+autoscaler, a dedicated CI node, a dedicated egress node, and a redundant NAT router.
-+Same architecture as `variants/solo`, different operating point.
- 
- ## Choose this variant if
- 
--- one operator, one cluster, and a control-plane restart is an inconvenience rather than
--  an incident;
--- the bill matters (this is roughly 70 % of the cost of the `ha` variant before any
--  autoscaling);
--- you can tolerate the API being unavailable while a single control plane reboots — pods
--  keep running, but scheduling, self-healing, GitOps sync and every `kubectl` stop.
--
--Choose `variants/ha` instead if you need the API to survive losing a node or a
--datacentre, or if you need to be able to drain a worker. See the root README for the
--side-by-side table.
--
--## Prerequisites
--
--| | |
--|---|---|
--| Terraform | ≥ 1.10 (`required_version = "~> 1.10"`) |
--| Packer | required for the first build only — `init.sh` builds the MicroOS snapshot |
--| A Hetzner Cloud project | with a read-write API token |
--| S3-compatible object storage | two buckets: Terraform state and etcd snapshots. **Enable versioning on the state bucket.** |
--| A Tailscale tailnet | plus an auth key; the kube-API is served only there |
--| A GitHub organisation | with an App (for ArgoCD repo access) and an OAuth App (for SSO) |
--| A companion GitOps repository | see `docs/adr/0008` — or set `SKIP_TEKTON_BOOTSTRAP=1` |
--| A domain | with DNS you control, for the ArgoCD ingress |
--| `kubectl`, `hcloud`, `python3`, `git` | on the machine running Terraform |
--
--## Build
-+- the Kubernetes API has to survive losing a node — with one control plane, a reboot
-+  stops scheduling, self-healing, GitOps sync and every `kubectl`, even though running
-+  pods carry on;
-+- you need to be able to **drain** a worker, for an upgrade or to move a workload. That
-+  is not a configuration flag, it is spare capacity: `solo` cannot do it, and this
-+  variant can only do it because of the third agent;
-+- one datacentre going away should cost you availability, not the cluster.
-+
-+Choose `variants/solo` if none of those are true. This one costs about **1.4×** as much
-+before any autoscaling, and roughly 1.8× with the autoscaler at its configured ceiling.
-+Three control planes are three things to patch, not one.
-+
-+## What differs from `solo`, and what each difference buys
-+
-+| Change | Buys | Costs |
-+|---|---|---|
-+| 3 control planes, split 2 + 1 across locations | API survives losing one node; quorum survives losing one member | +2 × cx23; you still operate etcd, and losing the *primary* location still costs the cluster |
-+| 3 general agents instead of 2 | a drain has somewhere to put the pods | +1 × cx33 |
-+| `system_upgrade_use_drain = true` | pods move off a node before it is upgraded, instead of riding out a restart | only safe while the headroom above exists |
-+| Autoscaler `max_nodes = 3` | Pending pods get a node in under three minutes | up to +3 × cx33 when it fires |
-+| Redundant NAT router | egress and the forwarded API port survive losing one router | +1 × cx23, **and egress leaves from a different public IP after failover** |
-+| `etcd-arg` heartbeat/election tuning | etcd tolerates the hop between datacentres without election storms | a longer election timeout means a longer stall when a leader genuinely dies |
-+
-+`docs/variant-delta.md` is the exact diff. `docs/cost-comparison.md` has the measured
-+prices behind the numbers above.
-+
-+## The decision this variant asks you to make
-+
-+`secondary_location` defaults to a datacentre in the same country as `primary_location`,
-+not a distant one, and that is the interesting choice in the whole design.
-+
-+Geographic separation and etcd performance pull in opposite directions. A second site
-+across the continent survives a regional event; it also puts tens of milliseconds between
-+etcd members, and every write that needs the third member pays it. Get the heartbeat and
-+election timeouts wrong for that distance and the failure is not a crash — it is a leader
-+election storm, where members declare the leader dead over a late heartbeat, elect a new
-+one, and repeat, while the API stalls for seconds at a time and nothing looks broken.
-+
-+The default trades regional survivability for single-digit latency: a different building,
-+different power, different network, a few milliseconds away. **Measure your own
-+round-trip time before choosing differently**, and raise the `etcd-arg` values in
-+`main.tf` to match if you do.
-+
-+## Prerequisites and build
-+
-+Identical to `variants/solo` — same tools, same accounts, same two-pass build for the
-+tailnet address (`docs/RUNBOOK.md` §2). Only the two location inputs are extra, and both
-+have defaults:
- 
- ```bash
--# 1. Inputs. Every variable without a default must be set — there are 25 of them, and
--#    the identifiers among them deliberately have no defaults so that a fork cannot
--#    inherit somebody else's domain, bucket or GitHub team.
--cp secrets.auto.example.tfvars secrets.auto.tfvars
--chmod 600 secrets.auto.tfvars
--$EDITOR secrets.auto.tfvars
--
--# 2. Which state store to use. providers.tf declares a PARTIAL backend and names no
--#    bucket, so init fails until you say. Create the bucket first, with versioning.
-+cp secrets.auto.example.tfvars secrets.auto.tfvars && chmod 600 secrets.auto.tfvars
- cp backend.hcl.example backend.hcl
--$EDITOR backend.hcl
--
--# 3. The GitHub App private key, at the path named in secrets.auto.tfvars.
--cp ~/Downloads/your-app.private-key.pem secrets/your-github-app.pem
--chmod 600 secrets/your-github-app.pem
--
--# 4. An ssh-agent holding the private half of ssh_public_key_path. The key is
--#    deliberately never given to Terraform — it would be written into the state in
--#    cleartext — so provisioners get it from the agent instead.
-+$EDITOR secrets.auto.tfvars backend.hcl
- eval "$(ssh-agent -s)" && ssh-add <the private half of ssh_public_key_path>
--
--# 5. Build.
- bash init.sh
- ```
- 
--### The build takes two passes, and the first one looks like a failure
--
--`kube_api_tailnet_address` is the control plane's address on your tailnet. Tailscale
--assigns it when the node first joins, so on a cluster that does not exist yet **you
--cannot know it in advance** — and it is required in the API server's certificate.
-+> **Use a different `key` in `backend.hcl` from any other cluster.** Two clusters sharing
-+> a state key will fight over it and destroy each other's resources. The backend is
-+> partial precisely so this is a decision you make rather than inherit.
- 
--Set a placeholder inside `100.64.0.0/10`, leave
--`control_plane_lb_enable_public_interface = true` in `main.tf`, run `init.sh`, then read
--the assigned address, put it in `secrets.auto.tfvars`, set the flag to `false`, and
--`terraform apply` again. Full procedure with the reasoning: **`docs/RUNBOOK.md` §2.**
-+### Extra step: verify quorum before you trust it
- 
--Skipping this is why a green-field build fails on the first apply.
--
--## Day two
-+Three control planes that never formed a quorum look exactly like three control planes
-+that did, until the first failure. After the build:
- 
- ```bash
--terraform init -backend-config=backend.hcl
--terraform plan     # read it. it is the only review that catches silent drift
--terraform apply
-+kubectl get nodes -l node-role.kubernetes.io/control-plane
-+# expect 3, all Ready, across two locations
-+
-+kubectl -n kube-system exec -it <a control-plane pod> -- \
-+  etcdctl endpoint status --cluster -w table
-+# expect 3 members, exactly one leader, and RAFT INDEX values within a few of each other
- ```
- 
--`bash apply.sh` is the same thing with Packer and the phased apply skipped.
-+A member that is persistently behind on raft index is a member that will not save you.
-+
-+## What this variant still does not give you
-+
-+Fewer than `solo`, but the list is not empty, and every item is structural rather than an
-+omission:
- 
--Two things in this configuration are hashed into Terraform state, so **editing a comment
--is not always free**: the `helm_release` values block (comments inside it are chart
--values) and anything under `extra-manifests/` or `scripts/` that is fingerprinted. A
--`plan` after a comment-only edit may legitimately show work. That is the mechanism doing
--its job — it exists so that editing a script actually deploys it.
--
--## Tearing down
--
--`destroy.sh` and `remove-protection.sh` both require `--project <name>`, prove the API
--token belongs to that project, default to a dry run, and demand a typed confirmation.
--`restore-protection.sh` puts delete protection back. Run them against a throwaway
--project only.
--
--## What this variant does not give you
--
--Stated plainly, because a reader coming from EKS/GKE/AKS will assume otherwise:
--
--- **No managed control-plane SLA** — there is nobody to page.
--- **No node auto-repair.** A NotReady node stays NotReady until a human acts.
--- **No drain headroom.** With two schedulable nodes there is nowhere to move pods to,
--  which is why `system_upgrade_use_drain = false`.
--- **A single NAT router** carrying all egress and the forwarded API port.
--- **etcd is yours.** Backups run; the restore is a manual procedure.
-+- **No managed control-plane SLA.** Three control planes are three you maintain.
-+- **No node auto-repair.** The autoscaler replaces nodes it manages; the static pools
-+  have no health-driven replacement anywhere in kube-hetzner 2.19.2. A NotReady static
-+  node stays NotReady until a human acts. Alert on it.
-+- **Not true surge upgrades.** k3s' system-upgrade-controller never adds a node before
-+  removing one, and a failed upgrade has no automatic rollback. Headroom emulates surge.
-+- **No availability zones.** Hetzner has datacentres, not zones — a different, larger
-+  latency domain than the ~1 ms zones managed Kubernetes spreads across.
-+- **No workload identity.** Pods keep long-lived secrets.
-+- **One cloud account** remains a single point of failure for everything in it.
- 
--`docs/managed-k8s-parity.md` accounts for all of it, row by row, with what it would cost
--to close each gap.
-+`docs/managed-k8s-parity.md` accounts for all twelve capabilities, including the six no
-+self-hosted stack can match.
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
 --- variants/solo/secrets.auto.example.tfvars
 +++ variants/ha/secrets.auto.example.tfvars
