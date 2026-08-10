@@ -37,7 +37,23 @@ provider "github" {
 }
 
 terraform {
-  required_version = "~> 1.10"
+  # 1.12, and the number is measured rather than chosen. This said "~> 1.10" from the
+  # start and it was never true: on 1.10.5 and 1.11.4 `terraform validate` fails inside
+  # UPSTREAM kube-hetzner 2.19.2, not in this configuration —
+  #
+  #   variables.tf:1413, variable "flannel_backend"
+  #   condition = var.flannel_backend == null || contains([...], var.flannel_backend)
+  #   -> Invalid function argument: argument must not be null
+  #
+  # because `||` does not short-circuit in a validation condition on those versions, so
+  # `contains()` is handed a null. Fixed in the language from 1.12 onward.
+  #
+  # Bisected in CI across the latest patch of every minor from 1.10 to 1.15, on both
+  # variants, and the floor entry of the CI matrix is pinned to 1.12.0 so this lower bound
+  # is exercised on every run rather than inferred from 1.12.2 working. Raise this and the
+  # matrix moves with it; that coupling is what stops the constraint drifting back into
+  # fiction.
+  required_version = "~> 1.12"
 
   # Remote state backend for an S3-compatible object store, declared as a PARTIAL
   # backend: nothing here says WHICH state store to use.
