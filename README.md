@@ -90,10 +90,13 @@ This tree is being prepared for publication and is **not finished**.
   empty state; it has not been booted, and neither the control-plane kill nor the etcd
   restore has been executed. That is the next step, and until it happens the availability
   claims are design intentions.
-- **CI is written but has never run.** `.github/workflows/ci.yml` exists and every job body
-  in it was exercised by hand, each one against input it must reject as well as input it
-  must accept — but no commit has yet triggered GitHub Actions on this tree, so there is no
-  green build to point at and none is claimed.
+- **CI runs green, and it earned that by going red first.** All nine jobs pass with no
+  credentials of any kind. Its first run found two real defects: `required_version` claimed
+  `~> 1.10` while upstream's own validation cannot parse on anything below 1.12, and the
+  generated `docs/variant-delta.md` was locale-dependent, so the drift-guard passed for the
+  maintainer's shell and failed for everybody else's. Both are fixed; the version floor is
+  now bisected rather than guessed, and both bounds of the constraint run on every pull
+  request.
 - Still to come: the finished documentation set. Both variant READMEs are drafts marked as
   such, and their quickstarts have not been walked end to end by anyone starting from an
   empty account — so the boot time, the real cost and the manual repairs a first run needs
