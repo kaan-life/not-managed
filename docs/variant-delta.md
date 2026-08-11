@@ -941,7 +941,11 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -
 -    Production:  https://acme-v02.api.letsencrypt.org/directory
 -    Staging:     https://acme-staging-v02.api.letsencrypt.org/directory
--
++# ─── Locations ───────────────────────────────────────────────────────────────
++# This variant is multi-location by design, so where things go is an input rather than a
++# constant repeated a dozen times. In the solo variant the location is a literal, because
++# there is only one and nothing has to agree with anything.
+ 
 -    DELIBERATELY NO DEFAULT, and this is the one place where "no default" is about safety
 -    rather than identity. Either default is wrong in a way that is hard to see:
 -
@@ -952,11 +956,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -      - defaulting to STAGING means a forgotten line in a tfvars file silently gives a
 -        production cluster untrusted certificates. Every browser and every client rejects
 -        them, and the configuration looks entirely correct.
-+# ─── Locations ───────────────────────────────────────────────────────────────
-+# This variant is multi-location by design, so where things go is an input rather than a
-+# constant repeated a dozen times. In the solo variant the location is a literal, because
-+# there is only one and nothing has to agree with anything.
- 
+-
 -    An unset variable is an error, which is neither of those.
 +variable "primary_location" {
 +  description = <<-EOT
@@ -1081,7 +1081,47 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  variable "utility_namespaces" {
    type        = list(string)
    description = "List of Kubernetes namespaces to create"
-@@ -373,6 +421,32 @@
+@@ -256,8 +304,38 @@
+ }
+ 
+ variable "etcd_s3_endpoint" {
+-  description = "S3 endpoint for etcd backups"
++  description = <<-EOT
++    S3 endpoint for etcd backups, as a BARE HOST — "fsn1.example-objectstorage.com", not
++    "https://fsn1.example-objectstorage.com".
++
++    The scheme is not cosmetic here, and getting it wrong fails in the worst possible
++    shape: snapshots keep SAVING and only the RESTORE breaks. k3s prefixes this value with
++    https:// when it builds the S3 client, so a value that already carries the scheme
++    becomes, verbatim from the log of a real restore attempt on 2026-08-11:
++
++      Attempting to create new S3 client for endpoint="https://https://fsn1.<host>"
++      failed to initialize S3 client: Endpoint url cannot have fully qualified paths.
++
++    The save path tolerates it and the restore path does not, so a cluster can hold months
++    of green, current, correctly-sized S3 snapshots that it cannot actually restore from.
++    Nothing reports this until the day you need it. Measured both ways on the green-field
++    rig: with the scheme, `--cluster-reset --etcd-s3` dies on the line above; with a bare
++    host the same command logs `Retrieving etcd snapshot ... from S3` and completes, and
++    `k3s etcd-snapshot list` shows an s3:// location rather than only file://.
++
++    This validation exists because the failure is silent for as long as it does not matter.
++  EOT
+   type        = string
++
++  validation {
++    condition     = !can(regex("^[a-zA-Z][a-zA-Z0-9+.-]*://", var.etcd_s3_endpoint))
++    error_message = "etcd_s3_endpoint must be a bare host with no scheme. k3s prepends https:// itself; leaving it here produces https://https://... and etcd snapshots become unrestorable while continuing to save."
++  }
++
++  validation {
++    condition     = !can(regex("/", var.etcd_s3_endpoint))
++    error_message = "etcd_s3_endpoint must be a bare host with no path component."
++  }
+ }
+ 
+ variable "etcd_s3_access_key" {
+@@ -373,6 +451,32 @@
    }
  }
  
