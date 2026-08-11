@@ -101,6 +101,27 @@ locals {
   # Guarded on the directory existing, since agents have no manifests directory.
   local_storage_skip_cmd = "test -d /var/lib/rancher/k3s/server/manifests && touch /var/lib/rancher/k3s/server/manifests/local-storage.yaml.skip || true"
 
+  # EVERY nodepool names its OS, and green-field is the only build that can tell you why.
+  #
+  # 3.1.0 resolves an unset nodepool `os` through local.{control_plane,agent}_nodepool_default_os:
+  # a pool that already has servers keeps whatever those servers run (this cluster: microos),
+  # and a pool that does NOT yet exist gets "leapmicro". Production therefore saw no diff at
+  # all, and a green-field build failed at PLAN time on 2026-08-11:
+  #
+  #   Error: Resource not found
+  #     with module.kube-hetzner.data.hcloud_image.leapmicro_x86_snapshot[0]
+  #     Resource (image) was not found using label selector:
+  #     leapmicro-snapshot=yes,kube-hetzner/os=leapmicro,kube-hetzner/k8s-distro=k3s
+  #
+  # packer/hcloud-microos-snapshots.pkr.hcl builds MicroOS and only MicroOS, so the snapshot
+  # the module now looks for by default is one this repository never produces. Naming the OS
+  # makes the two agree, and makes the running cluster's OS a written fact rather than an
+  # inference from labels the module started writing in this same upgrade.
+  #
+  # Moving to Leap Micro is the upstream recommendation for NEW clusters and is a separate
+  # decision: it needs a new Packer template and it cannot be proven against this cluster.
+  node_os = "microos"
+
   # ── Inputs that re-trigger the UPSTREAM kustomization ──────────────────────
   # kube-hetzner's own terraform_data.kustomization (module init.tf:264-303) is replaced
   # whenever any of these changes. Replacing it re-applies the vanilla kured manifest,
@@ -253,6 +274,7 @@ affinity:
       location    = "nbg1"
       min_nodes   = 0
       max_nodes   = 1
+      os          = local.node_os
       labels = {
         "node.kubernetes.io/role" = "autoscaled"
       }
@@ -467,6 +489,8 @@ module "kube-hetzner" {
       taints      = [],
       count       = 1
 
+      os = local.node_os
+
       enable_public_ipv4 = false
       enable_public_ipv6 = false
     },
@@ -478,6 +502,8 @@ module "kube-hetzner" {
       taints      = [],
       count       = 0
 
+      os = local.node_os
+
       enable_public_ipv4 = false
       enable_public_ipv6 = false
     },
@@ -488,6 +514,8 @@ module "kube-hetzner" {
       labels      = [],
       taints      = [],
       count       = 0
+
+      os = local.node_os
 
       enable_public_ipv4 = false
       enable_public_ipv6 = false
@@ -522,6 +550,8 @@ module "kube-hetzner" {
       # Fine-grained control over placement groups (nodes in the same group are spread over different physical servers, 10 nodes per placement group max):
       # placement_group = "default"
 
+      os = local.node_os
+
       enable_public_ipv4 = false
       enable_public_ipv6 = false
 
@@ -543,6 +573,8 @@ module "kube-hetzner" {
         "enforce-node-allocatable=pods",
       ]
 
+      os = local.node_os
+
       enable_public_ipv4 = false
       enable_public_ipv6 = false
     },
@@ -562,6 +594,8 @@ module "kube-hetzner" {
 
       longhorn_volume_size = 20
 
+      os = local.node_os
+
       enable_public_ipv4 = false
       enable_public_ipv6 = false
     },
@@ -580,6 +614,8 @@ module "kube-hetzner" {
       # This is useful in combination with the Egress Gateway feature for hosting certain services in the cluster, such as email servers.
       # floating_ip_rns = "my.domain.com"
       count = 1
+
+      os = local.node_os
 
       enable_public_ipv4 = false
       enable_public_ipv6 = false
@@ -612,6 +648,8 @@ module "kube-hetzner" {
         "eviction-hard=memory.available<300Mi,nodefs.available<10%,imagefs.available<10%",
         "enforce-node-allocatable=pods",
       ]
+
+      os = local.node_os
 
       enable_public_ipv4 = false
       enable_public_ipv6 = false

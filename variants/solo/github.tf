@@ -22,7 +22,14 @@ resource "terraform_data" "github_secrets" {
 
   provisioner "local-exec" {
     environment = {
-      KUBECONFIG                 = "${abspath(path.root)}/k3s_kubeconfig.yaml"
+      # NAMED AFTER THE CLUSTER, not after "k3s". kube-hetzner writes
+      # ${var.cluster_name}_kubeconfig.yaml (module kubeconfig.tf), and this line said
+      # k3s_kubeconfig.yaml until 2026-08-11 — correct here by coincidence, since this
+      # cluster is called k3s, and broken for every fork that picks another name. It
+      # surfaced the only way it could: the first green-field build, on a cluster named
+      # "gf", where the provisioner ran kubectl against a file that did not exist and
+      # fell back to localhost:8080. Nothing in production could ever have shown this.
+      KUBECONFIG                 = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
       GITHUB_APP_PEM_PATH        = "${abspath(path.root)}/${var.github_app_private_key_path}"
       GITHUB_APP_ID              = var.github_app_id
       GITHUB_APP_INSTALLATION_ID = var.github_app_installation_id

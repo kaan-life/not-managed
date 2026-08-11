@@ -151,7 +151,7 @@ resource "terraform_data" "argocd_root_appset" {
 
   provisioner "local-exec" {
     environment = {
-      KUBECONFIG       = "${abspath(path.root)}/k3s_kubeconfig.yaml"
+      KUBECONFIG       = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
       NAMESPACES       = join(",", concat(var.utility_namespaces, var.app_namespaces))
       GITHUB_ORG       = var.github_org_url
       GITHUB_REPO_NAME = var.github_repo_name
@@ -201,7 +201,7 @@ resource "terraform_data" "argocd_webhook_secret" {
 
   provisioner "local-exec" {
     environment = {
-      KUBECONFIG     = "${abspath(path.root)}/k3s_kubeconfig.yaml"
+      KUBECONFIG     = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
       WEBHOOK_SECRET = var.argocd_webhook_secret
     }
     command = <<-EOT
@@ -298,7 +298,7 @@ resource "terraform_data" "argocd_dex_secret" {
 
   provisioner "local-exec" {
     environment = {
-      KUBECONFIG          = "${abspath(path.root)}/k3s_kubeconfig.yaml"
+      KUBECONFIG          = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
       OAUTH_CLIENT_SECRET = var.github_oauth_client_secret
     }
     command = <<-EOT
