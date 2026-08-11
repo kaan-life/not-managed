@@ -232,6 +232,76 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -to close each gap.
 +`docs/managed-k8s-parity.md` accounts for all twelve capabilities, including the six no
 +self-hosted stack can match.
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/argocd.tf variants/ha/argocd.tf
+--- variants/solo/argocd.tf
++++ variants/ha/argocd.tf
+@@ -151,7 +151,7 @@
+ 
+   provisioner "local-exec" {
+     environment = {
+-      KUBECONFIG       = "${abspath(path.root)}/k3s_kubeconfig.yaml"
++      KUBECONFIG       = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
+       NAMESPACES       = join(",", concat(var.utility_namespaces, var.app_namespaces))
+       GITHUB_ORG       = var.github_org_url
+       GITHUB_REPO_NAME = var.github_repo_name
+@@ -201,7 +201,7 @@
+ 
+   provisioner "local-exec" {
+     environment = {
+-      KUBECONFIG     = "${abspath(path.root)}/k3s_kubeconfig.yaml"
++      KUBECONFIG     = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
+       WEBHOOK_SECRET = var.argocd_webhook_secret
+     }
+     command = <<-EOT
+@@ -298,7 +298,7 @@
+ 
+   provisioner "local-exec" {
+     environment = {
+-      KUBECONFIG          = "${abspath(path.root)}/k3s_kubeconfig.yaml"
++      KUBECONFIG          = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
+       OAUTH_CLIENT_SECRET = var.github_oauth_client_secret
+     }
+     command = <<-EOT
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/github.tf variants/ha/github.tf
+--- variants/solo/github.tf
++++ variants/ha/github.tf
+@@ -22,7 +22,14 @@
+ 
+   provisioner "local-exec" {
+     environment = {
+-      KUBECONFIG                 = "${abspath(path.root)}/k3s_kubeconfig.yaml"
++      # NAMED AFTER THE CLUSTER, not after "k3s". kube-hetzner writes
++      # ${var.cluster_name}_kubeconfig.yaml (module kubeconfig.tf), and this line said
++      # k3s_kubeconfig.yaml until 2026-08-11. It was correct only for a cluster that
++      # happens to be called k3s, and broken for every fork that picks another name. The
++      # first green-field build, on a cluster named "gf", is what found it: the
++      # provisioner ran kubectl against a file that did not exist and fell back to
++      # localhost:8080.
++      KUBECONFIG                 = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
+       GITHUB_APP_PEM_PATH        = "${abspath(path.root)}/${var.github_app_private_key_path}"
+       GITHUB_APP_ID              = var.github_app_id
+       GITHUB_APP_INSTALLATION_ID = var.github_app_installation_id
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/init.sh variants/ha/init.sh
+--- variants/solo/init.sh
++++ variants/ha/init.sh
+@@ -133,10 +133,13 @@
+   # ─────────────────────────────────────────────────────────────────────────
+   echo "==> Day-2 apply: skipping Packer build and phased apply."
+ 
+-  # Use k3s_kubeconfig.yaml if present, otherwise pull from remote state
+-  if [ -f "k3s_kubeconfig.yaml" ]; then
+-    echo "==> Using existing k3s_kubeconfig.yaml"
+-    export KUBECONFIG="k3s_kubeconfig.yaml"
++  # The module names this file after the cluster, not after "k3s" — see the note in
++  # github.tf. Hardcoding "k3s_kubeconfig.yaml" worked only for a cluster called k3s; a
++  # fork with any other cluster_name got a file it never looked at.
++  KUBECONFIG_NAME="$(sed -n 's/^[[:space:]]*cluster_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars | head -1)_kubeconfig.yaml"
++  if [ -f "${KUBECONFIG_NAME}" ]; then
++    echo "==> Using existing ${KUBECONFIG_NAME}"
++    export KUBECONFIG="${KUBECONFIG_NAME}"
+   else
+     echo "==> Fetching kubeconfig from terraform output..."
+     KUBECONFIG_FILE=$(mktemp --suffix=.yaml)
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/main.tf variants/ha/main.tf
 --- variants/solo/main.tf
 +++ variants/ha/main.tf
@@ -273,7 +343,34 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  locals {
    # kured ships tolerations for control-plane/master only; without the egress toleration it
    # never runs on the egress node, that node never reboots, and MicroOS transactional-update
-@@ -121,19 +152,20 @@
+@@ -101,6 +132,26 @@
+   # Guarded on the directory existing, since agents have no manifests directory.
+   local_storage_skip_cmd = "test -d /var/lib/rancher/k3s/server/manifests && touch /var/lib/rancher/k3s/server/manifests/local-storage.yaml.skip || true"
+ 
++  # EVERY nodepool names its OS, and green-field is the only build that can tell you why.
++  #
++  # 3.1.0 resolves an unset nodepool `os` through local.{control_plane,agent}_nodepool_default_os:
++  # a pool that already has servers keeps whatever those servers run, and a pool that does
++  # NOT yet exist gets "leapmicro". An in-place upgrade therefore sees no diff at all, and a
++  # green-field build fails at PLAN time — measured on 2026-08-11 in the throwaway project:
++  #
++  #   Error: Resource not found
++  #     with module.kube-hetzner.data.hcloud_image.leapmicro_x86_snapshot[0]
++  #     Resource (image) was not found using label selector:
++  #     leapmicro-snapshot=yes,kube-hetzner/os=leapmicro,kube-hetzner/k8s-distro=k3s
++  #
++  # packer/hcloud-microos-snapshots.pkr.hcl builds MicroOS and only MicroOS, so the snapshot
++  # the module now looks for by default is one this repository never produces. Naming the OS
++  # makes the two agree.
++  #
++  # Moving to Leap Micro is the upstream recommendation for NEW clusters and is a separate
++  # decision: it needs a new Packer template.
++  node_os = "microos"
++
+   # ── Inputs that re-trigger the UPSTREAM kustomization ──────────────────────
+   # kube-hetzner's own terraform_data.kustomization (module init.tf:264-303) is replaced
+   # whenever any of these changes. Replacing it re-applies the vanilla kured manifest,
+@@ -121,19 +172,20 @@
    kured_version        = "1.21.0"
    cert_manager_version = "v1.20.3"
    traefik_version      = "41.0.0"
@@ -303,7 +400,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    hetzner_ccm_merge_values = <<-EOT
  env:
    HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP:
-@@ -141,7 +173,7 @@
+@@ -141,7 +193,7 @@
    HCLOUD_LOAD_BALANCERS_DISABLE_PRIVATE_INGRESS:
      value: "true"
    HCLOUD_LOAD_BALANCERS_LOCATION:
@@ -312,7 +409,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    EOT
    longhorn_merge_values    = <<-EOT
  defaultSettings:
-@@ -186,8 +218,8 @@
+@@ -186,8 +238,8 @@
    #
    # 3.1.0 renamed the MODULE INPUT to k3s_channel and changed its default from "v1.33" to
    # "stable" — so the value below stopped being a no-op the moment the module moved, and
@@ -323,7 +420,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    # fingerprint is a sha1 over the JSON, key names included. Renaming the key would change
    # the hash and re-run the kured/storageclass patch hook for no reason at all.
    initial_k3s_channel = "v1.33"
-@@ -246,13 +278,24 @@
+@@ -246,13 +298,25 @@
        - level: Metadata
    EOT
  
@@ -347,10 +444,11 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        min_nodes   = 0
 -      max_nodes   = 1
 +      max_nodes   = 3
++      os          = local.node_os
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
        }
-@@ -327,38 +370,30 @@
+@@ -327,38 +391,30 @@
    #     which provider 1.60.1 still REQUIRES." Moot rather than fixed: 3.1.0 declares
    #     hcloud >= 1.62.0, so 1.60.1 cannot be installed against it at all —
    #     `terraform init` exits 1 with "no available releases match the given constraints
@@ -407,7 +505,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #   count = contains(var.enabled_architectures, "arm") && local.os_arch_requirements.microos.arm && ...
    # Naming x86 here closes the first clause explicitly rather than relying on the second.
    enabled_architectures = ["x86"]
-@@ -388,14 +423,12 @@
+@@ -388,14 +444,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -426,7 +524,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -458,11 +491,35 @@
+@@ -458,36 +512,69 @@
      }
    }
  
@@ -464,7 +562,10 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -471,23 +528,26 @@
+ 
++      os = local.node_os
++
+       enable_public_ipv4 = false
        enable_public_ipv6 = false
      },
      {
@@ -477,6 +578,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        taints      = [],
 -      count       = 0
 +      count       = 1
++
++      os = local.node_os
  
        enable_public_ipv4 = false
        enable_public_ipv6 = false
@@ -494,10 +597,12 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +
 +      # Its own spread group — see the note above.
 +      placement_group = "secondary"
++
++      os = local.node_os
  
        enable_public_ipv4 = false
        enable_public_ipv6 = false
-@@ -500,7 +560,7 @@
+@@ -500,7 +587,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -506,7 +611,16 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -529,7 +589,7 @@
+@@ -522,6 +609,8 @@
+       # Fine-grained control over placement groups (nodes in the same group are spread over different physical servers, 10 nodes per placement group max):
+       # placement_group = "default"
+ 
++      os = local.node_os
++
+       enable_public_ipv4 = false
+       enable_public_ipv6 = false
+ 
+@@ -529,7 +618,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -515,10 +629,16 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -547,9 +607,33 @@
-       enable_public_ipv6 = false
-     },
-     {
+@@ -543,13 +632,41 @@
+         "enforce-node-allocatable=pods",
+       ]
+ 
++      os = local.node_os
++
++      enable_public_ipv4 = false
++      enable_public_ipv6 = false
++    },
++    {
 +      # THE THIRD GENERAL AGENT — the reason system_upgrade_use_drain can be true below.
 +      #
 +      # Two schedulable nodes cannot be reduced to one without somewhere for the pods to
@@ -539,10 +659,12 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +        "enforce-node-allocatable=pods",
 +      ]
 +
-+      enable_public_ipv4 = false
-+      enable_public_ipv6 = false
-+    },
-+    {
++      os = local.node_os
++
+       enable_public_ipv4 = false
+       enable_public_ipv6 = false
+     },
+     {
        name        = "storage",
        server_type = "cx33",
 -      location    = "nbg1",
@@ -550,7 +672,15 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -568,7 +652,7 @@
+@@ -562,13 +679,15 @@
+ 
+       longhorn_volume_size = 20
+ 
++      os = local.node_os
++
+       enable_public_ipv4 = false
+       enable_public_ipv6 = false
+     },
      {
        name        = "egress",
        server_type = "cx23",
@@ -559,7 +689,16 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -595,7 +679,7 @@
+@@ -581,6 +700,8 @@
+       # floating_ip_rns = "my.domain.com"
+       count = 1
+ 
++      os = local.node_os
++
+       enable_public_ipv4 = false
+       enable_public_ipv6 = false
+     },
+@@ -595,7 +716,7 @@
        # inserting a pool earlier re-indexes (and recreates) the egress node.
        name        = "agent-ci",
        server_type = "cx33",
@@ -568,7 +707,15 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -619,15 +703,36 @@
+@@ -613,21 +734,44 @@
+         "enforce-node-allocatable=pods",
+       ]
+ 
++      os = local.node_os
++
+       enable_public_ipv4 = false
+       enable_public_ipv6 = false
+     },
    ]
  
    load_balancer_type     = "lb11"
@@ -608,7 +755,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -680,31 +785,28 @@
+@@ -680,31 +824,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -662,7 +809,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -762,6 +864,25 @@
+@@ -762,6 +903,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -688,7 +835,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -769,13 +890,33 @@
+@@ -769,13 +929,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -727,7 +874,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -833,15 +974,11 @@
+@@ -833,15 +1013,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -748,7 +895,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -849,26 +986,14 @@
+@@ -849,26 +1025,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -780,7 +927,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -894,18 +1019,12 @@
+@@ -894,18 +1058,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -805,7 +952,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -915,14 +1034,9 @@
+@@ -915,14 +1073,9 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.

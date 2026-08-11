@@ -133,10 +133,13 @@ if [ "$APPLY_ONLY" = true ]; then
   # ─────────────────────────────────────────────────────────────────────────
   echo "==> Day-2 apply: skipping Packer build and phased apply."
 
-  # Use k3s_kubeconfig.yaml if present, otherwise pull from remote state
-  if [ -f "k3s_kubeconfig.yaml" ]; then
-    echo "==> Using existing k3s_kubeconfig.yaml"
-    export KUBECONFIG="k3s_kubeconfig.yaml"
+  # The module names this file after the cluster, not after "k3s" — see the note in
+  # github.tf. Hardcoding "k3s_kubeconfig.yaml" worked only for a cluster called k3s; a
+  # fork with any other cluster_name got a file it never looked at.
+  KUBECONFIG_NAME="$(sed -n 's/^[[:space:]]*cluster_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars | head -1)_kubeconfig.yaml"
+  if [ -f "${KUBECONFIG_NAME}" ]; then
+    echo "==> Using existing ${KUBECONFIG_NAME}"
+    export KUBECONFIG="${KUBECONFIG_NAME}"
   else
     echo "==> Fetching kubeconfig from terraform output..."
     KUBECONFIG_FILE=$(mktemp --suffix=.yaml)
