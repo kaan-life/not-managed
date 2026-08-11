@@ -792,7 +792,18 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -871,15 +1013,11 @@
+@@ -840,7 +982,9 @@
+     "tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock &",
+     "sleep 5",
+     # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
+-    "tailscale up --authkey=${var.tailscale_auth_key} --advertise-routes=10.0.0.0/16 --accept-dns=false --advertise-tags=tag:k8s-nat"
++    # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
++    # every node runs this line, so two clusters on one tailnet fight over the same prefix.
++    "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
+   ]
+ 
+   restrict_outbound_traffic = true
+@@ -871,15 +1015,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -813,7 +824,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -887,26 +1025,14 @@
+@@ -887,26 +1027,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -845,7 +856,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -932,18 +1058,12 @@
+@@ -932,18 +1060,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -870,7 +881,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -953,14 +1073,9 @@
+@@ -953,14 +1075,9 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
@@ -1073,7 +1084,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  variable "utility_namespaces" {
    type        = list(string)
    description = "List of Kubernetes namespaces to create"
-@@ -373,6 +421,32 @@
+@@ -373,12 +421,82 @@
    }
  }
  
@@ -1106,4 +1117,54 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  variable "tailscale_auth_key" {
    description = "Tailscale auth key for node registration"
    type        = string
+   sensitive   = true
+ }
+ 
++variable "tailscale_advertise_routes" {
++  description = <<-EOT
++    Private subnets this cluster's nodes advertise as Tailscale subnet routes, so the
++    Hetzner private network is reachable from the tailnet. Empty means advertise nothing.
++
++    THIS HAS TO DIFFER PER CLUSTER, and the default cannot do that for you. Every node runs
++    the advertisement (it is in preinstall_exec, not something only the NAT router does), so
++    two clusters built from this repository onto the SAME tailnet advertise the SAME prefix
++    and Tailscale picks one of them as the primary router for it. Measured on 2026-08-11
++    while green-field testing:
++
++      tailscale status --json  ->  peer k3s-agent-small-pkb PrimaryRoutes ['10.0.0.0/16']
++
++    Several production nodes advertise that prefix and one had been elected primary, which
++    only happens where routes for the tag are auto-approved. A second cluster joining that
++    tailnet is therefore one election away from taking over the FIRST cluster's subnet
++    route — traffic for the wrong cluster's private network, with nothing logged anywhere.
++
++    So: give a second cluster its own range (set network_ipv4_cidr to match), or set this to
++    [] and reach it by node address only. The default is what this cluster has always
++    advertised, so leaving it alone changes nothing.
++  EOT
++  type        = list(string)
++  default     = ["10.0.0.0/16"]
++  nullable    = false
++
++  validation {
++    condition = alltrue([
++      for r in var.tailscale_advertise_routes :
++      can(cidrhost(r, 0)) && (
++        can(regex("^10\\.", cidrhost(r, 0))) ||
++        can(regex("^172\\.(1[6-9]|2[0-9]|3[01])\\.", cidrhost(r, 0))) ||
++        can(regex("^192\\.168\\.", cidrhost(r, 0)))
++      )
++    ])
++    error_message = "Every entry must be an RFC1918 IPv4 CIDR. Advertising a public range over the tailnet blackholes it for every device on the tailnet, not just this cluster."
++  }
++
++  validation {
++    condition     = !contains([for r in var.tailscale_advertise_routes : trimspace(r)], "0.0.0.0/0")
++    error_message = "0.0.0.0/0 would make these nodes the default route for the whole tailnet."
++  }
++}
++
+ variable "bootstrap_phase" {
+   description = <<-EOT
+     Pass 1 of a green-field build. Set true for the FIRST apply of a cluster that does not
 ```
