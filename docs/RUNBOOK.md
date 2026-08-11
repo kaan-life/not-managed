@@ -314,6 +314,17 @@ on Monday and the snapshot that predates it is already gone.
 2. **The S3 credentials for the snapshot bucket.** Same argument. They are in the same
    file, and if that file is only on the laptop that died, so is your recovery.
 
+3. **The endpoint must be a BARE HOST.** `etcd_s3_endpoint` is
+   `fsn1.example-objectstorage.com`, never `https://fsn1.example-objectstorage.com`. k3s
+   prepends the scheme itself, so a value that carries one becomes `https://https://...`
+   and the S3 client refuses it. This fails in the worst shape available: snapshots keep
+   SAVING and only the RESTORE breaks, so the cluster accumulates months of green, current,
+   correctly-sized S3 snapshots it cannot restore from, and nothing says so until the day
+   you need it. Measured on the green-field rig, 2026-08-11 — with the scheme,
+   `--cluster-reset --etcd-s3` dies on `Endpoint url cannot have fully qualified paths`;
+   with a bare host it logs `Retrieving etcd snapshot ... from S3` and completes.
+   `variables.tf` now rejects a scheme at plan time so this cannot be reintroduced.
+
 Verify you can list snapshots *before* an incident, not during one:
 
 ```bash
@@ -332,6 +343,17 @@ restore is not a rolling operation and there is no way to do it without downtime
 # 1. Stop k3s on EVERY server node. Do this first and completely — a surviving member
 #    with the old data will fight the restored one over cluster identity.
 sudo systemctl stop k3s          # on each control-plane node
+
+# 1b. On the node you are about to reset, REMOVE THE SERVER URL from its config, or the
+#     reset refuses to start:
+#       cannot perform cluster-reset while server URL is set - remove server from
+#       configuration before resetting
+#     This step was missing from this runbook until 2026-08-11, when the first real restore
+#     stopped here. Note the quoting: kube-hetzner writes config.yaml with QUOTED keys, so
+#     the line is `"server": "https://..."` and a sed for '^server:' silently matches
+#     nothing — which is exactly what happened on the first attempt.
+sudo cp /etc/rancher/k3s/config.yaml /etc/rancher/k3s/config.yaml.bak
+sudo sed -i '/^"server":/d' /etc/rancher/k3s/config.yaml
 
 # 2. On ONE control-plane node, reset the cluster from a snapshot. Use the S3 form to
 #    pull it directly; use a local path if the node still has the file.
@@ -375,6 +397,12 @@ Two things that will surprise you:
   namespace, a secret, an ArgoCD Application — is gone from Kubernetes but may still
   exist in the cloud. Volumes provisioned after the snapshot become orphans: real,
   billed, and referenced by nothing.
+- **Autoscaler nodes are invisible to `terraform destroy`.** They are created by the
+  cluster autoscaler, never enter Terraform state, and so survive a destroy — and a
+  surviving node holds the private Network, which then cannot be deleted either. Measured
+  on 2026-08-11: a green-field teardown reported success and left one server plus the
+  Network billing. `scripts/assert-no-orphans.sh` is what catches this; run it after every
+  destroy and delete what it lists by hand.
 - **Terraform does not know a restore happened.** Run `terraform plan` afterwards and
   read it carefully. Resources it created after the snapshot still exist in the cloud and
   in Terraform state, but the Kubernetes objects backing them may not — the plan is the
