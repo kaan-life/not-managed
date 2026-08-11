@@ -379,6 +379,50 @@ variable "tailscale_auth_key" {
   sensitive   = true
 }
 
+variable "tailscale_advertise_routes" {
+  description = <<-EOT
+    Private subnets this cluster's nodes advertise as Tailscale subnet routes, so the
+    Hetzner private network is reachable from the tailnet. Empty means advertise nothing.
+
+    THIS HAS TO DIFFER PER CLUSTER, and the default cannot do that for you. Every node runs
+    the advertisement (it is in preinstall_exec, not something only the NAT router does), so
+    two clusters built from this repository onto the SAME tailnet advertise the SAME prefix
+    and Tailscale picks one of them as the primary router for it. Measured on 2026-08-11
+    while green-field testing:
+
+      tailscale status --json  ->  peer k3s-agent-small-pkb PrimaryRoutes ['10.0.0.0/16']
+
+    Several production nodes advertise that prefix and one had been elected primary, which
+    only happens where routes for the tag are auto-approved. A second cluster joining that
+    tailnet is therefore one election away from taking over the FIRST cluster's subnet
+    route — traffic for the wrong cluster's private network, with nothing logged anywhere.
+
+    So: give a second cluster its own range (set network_ipv4_cidr to match), or set this to
+    [] and reach it by node address only. The default is what this cluster has always
+    advertised, so leaving it alone changes nothing.
+  EOT
+  type        = list(string)
+  default     = ["10.0.0.0/16"]
+  nullable    = false
+
+  validation {
+    condition = alltrue([
+      for r in var.tailscale_advertise_routes :
+      can(cidrhost(r, 0)) && (
+        can(regex("^10\\.", cidrhost(r, 0))) ||
+        can(regex("^172\\.(1[6-9]|2[0-9]|3[01])\\.", cidrhost(r, 0))) ||
+        can(regex("^192\\.168\\.", cidrhost(r, 0)))
+      )
+    ])
+    error_message = "Every entry must be an RFC1918 IPv4 CIDR. Advertising a public range over the tailnet blackholes it for every device on the tailnet, not just this cluster."
+  }
+
+  validation {
+    condition     = !contains([for r in var.tailscale_advertise_routes : trimspace(r)], "0.0.0.0/0")
+    error_message = "0.0.0.0/0 would make these nodes the default route for the whole tailnet."
+  }
+}
+
 variable "bootstrap_phase" {
   description = <<-EOT
     Pass 1 of a green-field build. Set true for the FIRST apply of a cluster that does not

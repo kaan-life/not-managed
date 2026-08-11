@@ -840,7 +840,10 @@ module "kube-hetzner" {
     "tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock &",
     "sleep 5",
     # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
-    "tailscale up --authkey=${var.tailscale_auth_key} --advertise-routes=10.0.0.0/16 --accept-dns=false --advertise-tags=tag:k8s-nat"
+    # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
+    # every node runs this line, so two clusters on one tailnet fight over the same prefix.
+    # The default reproduces the literal that used to be here, byte for byte.
+    "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
   ]
 
   restrict_outbound_traffic = true

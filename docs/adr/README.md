@@ -20,12 +20,19 @@ repository.
 | 0009 † | No SealedSecret ciphertext is ever published; every sealed secret ships as a template | accepted | 2026-08-09 |
 | 0010 † | The published GitOps repository is a reference subset built around one environment | accepted | 2026-08-09 |
 | 0011 † | Apache-2.0 for the GitOps repository; nothing upstream is vendored | accepted | 2026-08-09 |
+| 0012 † | Names and hosting account for the two published repositories | accepted | 2026-08-11 |
 
 † ADR-0009 through ADR-0011 were recorded on 2026-08-09 as the decision gate for open-sourcing the
 companion GitOps repository, which ADR-0008 committed to. They are numbered in this sequence
 because ADR-0008 is, so that no two records in this architecture share a number — but they govern
 the *other* repository, and they ship with **its** publication, not with this one's, which is why
 `scripts/export-public-tree.sh` lists all three under EXCLUDE.
+
+ADR-0012 (2026-08-11) carries the same dagger for a **different** reason: it governs both
+repositories, but it names the hosting account and describes what the private history contains,
+which is the material the de-identification exists to remove. It is excluded for that reason
+rather than for belonging to the other half. The decisions it records reach the reader through the
+published READMEs instead.
 
 **They are named, not linked, and that is deliberate.** This file is exported to the public tree
 while those three records are not, so a link here resolves in the private repository and is dead in
