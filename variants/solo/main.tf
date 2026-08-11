@@ -116,11 +116,19 @@ locals {
   #
   # KEEP IN SYNC: adding any module input that appears in the module's kustomization trigger
   # set WITHOUT adding it here re-opens exactly this failure, and it fails silent.
-  hetzner_ccm_version      = "v1.22.0"
-  hetzner_csi_version      = "v2.22.0"
-  kured_version            = "1.21.0"
-  cert_manager_version     = "v1.20.3"
-  traefik_version          = "41.0.0"
+  hetzner_ccm_version  = "v1.22.0"
+  hetzner_csi_version  = "v2.22.0"
+  kured_version        = "1.21.0"
+  cert_manager_version = "v1.20.3"
+  traefik_version      = "41.0.0"
+  # Pinned during the 3.1.0 upgrade, at the version the cluster is ALREADY running
+  # (measured: `kubectl -n kube-system get ds cilium -o jsonpath=...` -> cilium:v1.17.0).
+  # It was inherited before: 2.19.2 defaulted to 1.17.0 and this file said nothing, so the
+  # module bump to 3.1.0 — whose default is 1.19.3 — would have carried the CNI across two
+  # minor versions inside a plan whose headline change was an input rename. That is the
+  # same silent-inheritance failure the note above describes, one layer down. Moving Cilium
+  # is a change with its own upgrade notes and its own blast radius; it gets its own PR.
+  cilium_version           = "1.17.0"
   cilium_merge_values      = <<-EOT
 encryption:
   enabled: true
@@ -175,6 +183,13 @@ affinity:
   # module bump that changes the default would move this cluster a minor version with no
   # diff here to show it. Naming it makes that impossible. Patch releases within v1.33
   # still arrive automatically, which is the intended CVE cadence.
+  #
+  # 3.1.0 renamed the MODULE INPUT to k3s_channel and changed its default from "v1.33" to
+  # "stable" — so the value below stopped being a no-op the moment the module moved, and
+  # is now the only thing keeping this cluster on v1.33. The LOCAL deliberately keeps the
+  # v2 name: it is also a key in local.kustomization_trigger_fingerprint, and that
+  # fingerprint is a sha1 over the JSON, key names included. Renaming the key would change
+  # the hash and re-run the kured/storageclass patch hook for no reason at all.
   initial_k3s_channel = "v1.33"
 
   # Kubernetes API audit logging. Nothing recorded who called the API before this: a
@@ -260,6 +275,9 @@ affinity:
     # system_upgrade_schedule_window is a trigger key in its own right.
     initial_k3s_channel            = local.initial_k3s_channel
     system_upgrade_schedule_window = local.system_upgrade_schedule_window
+    # Same rule, applied to the input the 3.1.0 upgrade added: cilium_version is one of the
+    # entries in the module's `versions` trigger, so it belongs here too.
+    cilium_version = local.cilium_version
     # KEEP IN SYNC caught this one empirically: adding autoscaler_nodepools replaces the
     # module's terraform_data.kustomization (the autoscaler manifest is part of it), which
     # re-applies the vanilla kured manifest and wipes the toleration patch. Without this
@@ -277,40 +295,73 @@ module "kube-hetzner" {
   robot_user     = var.robot_user
   robot_password = var.robot_password
   # Rotated 2026-06-10 — see the notes on variable "k3s_token" in variables.tf.
-  k3s_token = var.k3s_token
+  cluster_token = var.k3s_token
 
   source = "kube-hetzner/kube-hetzner/hcloud"
 
-  # THIS PIN IS IMMUTABLE, and not for the reason people usually assume.
+  # WHAT A REGISTRY PIN ACTUALLY PINS, which is not what people usually assume.
   #
   # "A module pinned to a git tag is pinned to something mutable" is true for a git
   # source and false for a registry source, and the difference is invisible in this file.
   # The registry resolved this version to a commit at publish time and hands Terraform
   # that commit, never the tag:
   #
-  #   curl -sSI https://registry.terraform.io/v1/modules/kube-hetzner/kube-hetzner/hcloud/2.19.2/download
+  #   curl -sSI https://registry.terraform.io/v1/modules/kube-hetzner/kube-hetzner/hcloud/3.1.0/download
   #   x-terraform-get: git::https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner
-  #                    ?ref=08e59a31197ce8a24d80805e5062ee3ed8ec024d
+  #                    ?ref=ed524efe85377a62f1aecf34422c8ab1b073a75b
   #
-  # So force-moving the upstream v2.19.2 tag would not change a byte of what gets
-  # downloaded here. Verified further: the registry tarball and a fresh clone of that
-  # commit are byte-identical across every file. Rewriting this as a git source with an
-  # explicit ?ref=<sha> would buy no immutability, cost a full clone on every init, and
-  # move the record of the correct SHA from the registry into a comment we maintain.
+  # So force-moving the upstream v3.1.0 tag would not change a byte of what gets downloaded
+  # here. Rewriting this as a git source with an explicit ?ref=<sha> would buy no
+  # immutability, cost a full clone on every init, and move the record of the correct SHA
+  # from the registry into a comment we maintain.
   #
-  # What IS still possible: the module owner deleting and republishing version 2.19.2
+  # What IS still possible: the module owner deleting and republishing version 3.1.0
   # against a different commit. The SHA above is what to compare against — the curl
-  # command is the check, and it belongs in CI.
+  # command is the check, and it belongs in CI. Terraform does not lock modules the way it
+  # locks providers, so the version below is the only thing holding this in place.
   #
-  # Terraform does not lock modules the way it locks providers, so the exact version
-  # below is the only thing holding this in place. Two competing constraints fix it:
-  #  - 2.20.0 REMOVED assignee_type from the NAT-router hcloud_primary_ip resources, which
-  #    provider 1.60.1 (our committed lock) still REQUIRES -> "Missing required argument".
-  #  - 2.19.3 ADDED `trimspace(var.ssh_public_key)`; our state holds the key WITH a trailing
-  #    newline (Hetzner preserves it), so trimspace creates a phantom hcloud_ssh_key diff that
-  #    cascades into rebuilding the NAT router. 2.19.2 still passes the key untrimmed (matches
-  #    state) AND still has assignee_type -> clean plan, no spurious replacements.
-  version = "2.19.2"
+  # ── THIS BLOCK USED TO SAY "THIS PIN IS IMMUTABLE", AT 2.19.2. Both reasons it gave were
+  # real when written, and neither survived being re-measured on 2026-08-11:
+  #
+  #  1. "2.20.0 removed assignee_type from the NAT-router hcloud_primary_ip resources,
+  #     which provider 1.60.1 still REQUIRES." Moot rather than fixed: 3.1.0 declares
+  #     hcloud >= 1.62.0, so 1.60.1 cannot be installed against it at all —
+  #     `terraform init` exits 1 with "no available releases match the given constraints
+  #     1.60.1, >= 1.62.0". Against the provider now locked (1.68.0) the argument's absence
+  #     is a non-event: both nat_router primary IPs are refreshed and appear in NO change
+  #     list in the 3.1.0 plan.
+  #
+  #  2. "2.19.3 added trimspace(var.ssh_public_key); our state holds the key WITH a
+  #     trailing newline, so trimspace creates a phantom hcloud_ssh_key diff that cascades
+  #     into rebuilding the NAT router." Half true. The trimspace is still there in 3.1.0
+  #     and the phantom diff is REAL — the Hetzner API itself returns 108 bytes ending in
+  #     \n for ssh_key 111717378, so the trimmed config can never match the refreshed
+  #     state and hcloud_ssh_key.k3s[0] is replaced. The CASCADE is gone: 3.1.0 added
+  #     ssh_keys and user_data to hcloud_server.nat_router's ignore_changes, so the router
+  #     is updated in place (labels) and every other server is untouched. A replaced SSH
+  #     key object costs nothing at runtime — Hetzner consumes ssh_keys only at server
+  #     creation, and all five servers ignore that attribute.
+  #
+  # The upgrade happened because 2.19.2 declared `data "hcloud_image" "microos_arm_snapshot"`
+  # with no count — see enabled_architectures below for why that made a green-field build
+  # impossible while Hetzner's ARM fleet was sold out.
+  version = "3.1.0"
+
+  # THE REASON THIS MODULE WAS UPGRADED AT ALL, in one input.
+  #
+  # Every node here is x86 (cx23/cx33). 2.19.2 did not care: it declared
+  # `data "hcloud_image" "microos_arm_snapshot"` with no count, so Terraform read the ARM
+  # snapshot on EVERY plan, x86-only cluster or not — and the singular data source errors
+  # when nothing matches. That is survivable for this cluster because its ARM snapshot has
+  # existed since 2026-03-08. It is fatal for a green-field build: on 2026-08-10 all four
+  # cax types were unavailable in nbg1-dc3, hel1-dc2 and fsn1-dc14 (measured via GET
+  # /v1/datacenters), so no ARM snapshot could be created, so M4-b could not even PLAN.
+  #
+  # 3.1.0 gates the lookup twice over: the data source is plural (`hcloud_images`, empty
+  # list instead of an error) and carries
+  #   count = contains(var.enabled_architectures, "arm") && local.os_arch_requirements.microos.arm && ...
+  # Naming x86 here closes the first clause explicitly rather than relying on the second.
+  enabled_architectures = ["x86"]
 
   # pathexpand so "~/..." works; only the PUBLIC half is ever read here. See
   # ssh_private_key below for why the private half deliberately is not passed.
@@ -381,20 +432,30 @@ module "kube-hetzner" {
   # kustomize deploy. The hook resource (kustomization_user_deploy) only exists when
   # extra-manifests/ holds at least one template — see extra-manifests/kured-patch-marker
   # .yaml.tpl, which also embeds the patch so changes re-trigger the deploy.
-  extra_kustomize_deployment_commands = "kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}' && ${local.longhorn_small_no_sched_cmd} && ${local.storageclass_default_fix_cmd} && ${local.local_storage_skip_cmd}"
-  extra_kustomize_parameters = {
-    kured_tolerations_patch = local.kured_tolerations_patch
-    longhorn_small_no_sched = local.longhorn_small_no_sched_cmd
-    # Fingerprint: changing kured_options re-renders the upstream kured manifest and
-    # wipes the tolerations patch. Baking the fingerprint into the marker template makes
-    # the same apply re-trigger the patch hook, so the two move together.
-    kured_options_fingerprint = sha1(jsonencode(local.kured_options))
-    # Same idea for the storageclass patch command: putting it in the marker template
-    # means editing it (or adding it for the first time) re-triggers the deploy hook.
-    storageclass_default_fix = local.storageclass_default_fix_cmd
-    # See local.kustomization_trigger_fingerprint: this is what makes the patch hook
-    # re-run whenever the module re-applies the upstream manifests.
-    kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
+  # 3.1.0 replaced the three flat extra_kustomize_* inputs with ONE ordered map. The key
+  # is the order number and must be a positive numeric string; "1" is the only set here,
+  # and source_folder repeats what extra_kustomize_folder defaulted to in 2.19.2
+  # ("extra-manifests"), because in v3 an unset source_folder means an empty set, not the
+  # old default. post_commands is the old extra_kustomize_deployment_commands verbatim.
+  user_kustomizations = {
+    "1" = {
+      source_folder = "extra-manifests"
+      kustomize_parameters = {
+        kured_tolerations_patch = local.kured_tolerations_patch
+        longhorn_small_no_sched = local.longhorn_small_no_sched_cmd
+        # Fingerprint: changing kured_options re-renders the upstream kured manifest and
+        # wipes the tolerations patch. Baking the fingerprint into the marker template makes
+        # the same apply re-trigger the patch hook, so the two move together.
+        kured_options_fingerprint = sha1(jsonencode(local.kured_options))
+        # Same idea for the storageclass patch command: putting it in the marker template
+        # means editing it (or adding it for the first time) re-triggers the deploy hook.
+        storageclass_default_fix = local.storageclass_default_fix_cmd
+        # See local.kustomization_trigger_fingerprint: this is what makes the patch hook
+        # re-run whenever the module re-applies the upstream manifests.
+        kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
+      }
+      post_commands = "kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}' && ${local.longhorn_small_no_sched_cmd} && ${local.storageclass_default_fix_cmd} && ${local.local_storage_skip_cmd}"
+    }
   }
 
   control_plane_nodepools = [
@@ -406,8 +467,8 @@ module "kube-hetzner" {
       taints      = [],
       count       = 1
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
     },
     {
       name        = "control-plane-nbg1-2",
@@ -417,8 +478,8 @@ module "kube-hetzner" {
       taints      = [],
       count       = 0
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
     },
     {
       name        = "control-plane-hel1",
@@ -428,8 +489,8 @@ module "kube-hetzner" {
       taints      = [],
       count       = 0
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
     }
   ]
 
@@ -461,8 +522,8 @@ module "kube-hetzner" {
       # Fine-grained control over placement groups (nodes in the same group are spread over different physical servers, 10 nodes per placement group max):
       # placement_group = "default"
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
 
     },
     {
@@ -482,8 +543,8 @@ module "kube-hetzner" {
         "enforce-node-allocatable=pods",
       ]
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
     },
     {
       name        = "storage",
@@ -501,8 +562,8 @@ module "kube-hetzner" {
 
       longhorn_volume_size = 20
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
     },
     {
       name        = "egress",
@@ -520,8 +581,8 @@ module "kube-hetzner" {
       # floating_ip_rns = "my.domain.com"
       count = 1
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
     },
     {
       # Dedicated CI node. Tekton pipeline pods (maven+dind+postgres, pnpm+Playwright) are
@@ -552,8 +613,8 @@ module "kube-hetzner" {
         "enforce-node-allocatable=pods",
       ]
 
-      disable_ipv4 = true
-      disable_ipv6 = true
+      enable_public_ipv4 = false
+      enable_public_ipv6 = false
     },
   ]
 
@@ -614,12 +675,10 @@ module "kube-hetzner" {
   # without an explicit storageClassName can land on node-local storage.
   enable_local_storage = true
 
-  hetzner_ccm_use_helm = true
-
   # Change to 3, true, true for HA
   longhorn_replica_count = 1
 
-  automatically_upgrade_k3s = true
+  automatically_upgrade_kubernetes = true
 
   # false = cordon during a k3s upgrade, do not drain. This is a small-cluster setting
   # and it comes from an incident on 2026-08-05.
@@ -648,7 +707,7 @@ module "kube-hetzner" {
   system_upgrade_use_drain = false
 
   system_upgrade_schedule_window = local.system_upgrade_schedule_window
-  initial_k3s_channel            = local.initial_k3s_channel
+  k3s_channel                    = local.initial_k3s_channel
 
   # ── Cluster autoscaler: on-demand third worker (POC, M1 parity row 3.5) ──────
   #
@@ -679,8 +738,8 @@ module "kube-hetzner" {
   autoscaler_nodepools = local.autoscaler_nodepools
 
 
-  autoscaler_disable_ipv4 = true
-  autoscaler_disable_ipv6 = true
+  autoscaler_enable_public_ipv4 = false
+  autoscaler_enable_public_ipv6 = false
 
   # etcd snapshot schedule and retention (M1 parity row 3.2).
   #
@@ -708,7 +767,7 @@ module "kube-hetzner" {
   # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
   # terraform_data.audit_policy (control_planes.tf:220), not the kustomization. Putting
   # it in the fingerprint would re-run the kured patch for no reason.
-  k3s_audit_policy_config = local.k3s_audit_policy
+  audit_policy_config = local.k3s_audit_policy
 
   automatically_upgrade_os = true
   #
@@ -769,7 +828,50 @@ module "kube-hetzner" {
 
   firewall_ssh_source = var.firewall_ssh_source
 
+  # An INVERTED rename with an inverted default, which is the dangerous combination: 2.19.2
+  # had block_icmp_ping_in = false (ping allowed), 3.1.0 has allow_inbound_icmp = false
+  # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
+  # would have silently dropped the firewall's ICMP rule during a version bump.
+  #
+  # true keeps today's behaviour. Measured before choosing: three ICMP echoes to the NAT
+  # router's public IPv4 (read out of state, not written down here) answered, 0% loss —
+  #   terraform state show 'module.kube-hetzner.hcloud_primary_ip.nat_router_primary_ipv4[0]'
+  # is where that address comes from. Every node has enable_public_ipv4 =
+  # false, so that router is the ONLY address this rule applies to — and with the API on a
+  # tailnet, an ICMP echo to it is the one liveness check that still works from outside when
+  # the tailnet itself is the thing that is broken. docs/ARCHITECTURE.md names the missing
+  # break-glass path as a known cost of the tailnet posture; this is not the change that
+  # should quietly make it worse. Blocking it is a defensible hardening step — as its own PR.
+  allow_inbound_icmp = true
+
   cni_plugin = "cilium"
+
+  # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
+  # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
+  # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
+  # k3s ALSO started its own embedded kube-proxy. We never set it, so this cluster has been
+  # running both: Cilium replacing kube-proxy, and k3s starting one anyway.
+  #
+  # 3.1.0 ties the Cilium values to this input — `kubeProxyReplacement: ${!enable_kube_proxy}`
+  # and `bpf.masquerade: ${!enable_kube_proxy}` — so the literal translation of the old
+  # default (enable_kube_proxy = true) would flip BOTH of those to false and tear out the
+  # dataplane this cluster actually runs. Measured on the live cluster before choosing:
+  #
+  #   kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.kube-proxy-replacement}'
+  #     -> true
+  #   ... '{.data.enable-bpf-masquerade}'   -> true
+  #
+  # false is therefore the value that keeps Cilium exactly as deployed. It is also the only
+  # value 3.1.0 accepts here at all: validation-contract.tf:1112 fails the plan outright
+  # because cilium_egress_gateway_enabled requires kube-proxy replacement, and that egress
+  # gateway is what pins outbound traffic to the dedicated egress node's IP.
+  #
+  # WHAT IT CHANGES ON THE NEXT APPLY: k3s stops starting the redundant embedded kube-proxy
+  # (`disable-kube-proxy: true` lands in config.yaml). Cilium has been serving that role
+  # since the cluster was built, so this removes a duplicate, not the implementation.
+  enable_kube_proxy = false
+
+  cilium_version = local.cilium_version
 
   cilium_egress_gateway_enabled = true
 
@@ -781,7 +883,7 @@ module "kube-hetzner" {
     "2606:4700:4700::1111",
   ]
 
-  use_control_plane_lb = true
+  enable_control_plane_load_balancer = true
 
   # The kube-API is served tailscale-only, via the control-plane node's tailnet address.
   # That address has to appear in two places at once and they must never drift: it must
@@ -818,7 +920,10 @@ module "kube-hetzner" {
   # apply has to reach an API whose tailnet address does not exist yet. Closed for every
   # apply after it, which is what the default false means: an operator who never thinks
   # about this flag gets the closed state.
-  control_plane_lb_enable_public_interface = var.bootstrap_phase
+  #
+  # 3.1.0 renamed this input to control_plane_load_balancer_enable_public_network. Same
+  # meaning, same polarity — unlike allow_inbound_icmp and enable_kube_proxy above.
+  control_plane_load_balancer_enable_public_network = var.bootstrap_phase
 
   cilium_merge_values = local.cilium_merge_values
 
