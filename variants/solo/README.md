@@ -1,10 +1,16 @@
 # Variant: solo
 
-> **Draft quickstart.** Written before the green-field build that verifies it. Every step
-> below is either exercised in the running cluster this variant was derived from, or
-> reasoned from the code — but the sequence as a whole has not yet been run start to
-> finish by someone with no prior knowledge. That run is what turns this into the real
-> README, with measured timings and whatever manual repairs it needed.
+> **This variant has been built green-field from this tree**, twice, on an empty project —
+> most recently on 2026-08-12, when it was also used to prove that the companion GitOps
+> repository reconciles end to end. What that build needed beyond the steps below is
+> written down: see **"What a first run actually needed"** in
+> [`../ha/README.md`](../ha/README.md). Eight of its nine items apply to this variant
+> unchanged; the ninth (`nat_router_hcloud_token`) is `ha`-only.
+>
+> What has *not* happened yet is the test that matters most for a quickstart: nobody
+> unfamiliar with this repository has walked it start to finish. Until that happens, treat
+> the ordering as verified and the *explanations* as unproven — the author knows too much
+> to notice what is missing.
 
 One control plane, two general-purpose agents, a dedicated CI node, a dedicated egress
 node, and a NAT router. The Kubernetes API is reachable only over a Tailscale tailnet;
@@ -107,6 +113,19 @@ its job — it exists so that editing a script actually deploys it.
 token belongs to that project, default to a dry run, and demand a typed confirmation.
 `restore-protection.sh` puts delete protection back. Run them against a throwaway
 project only.
+
+> **A single `terraform destroy` does not empty the project, and it can fail without
+> saying why.** Measured on this variant, 2026-08-12: the destroy hung twenty minutes on a
+> network subnet and ended on `context deadline exceeded`, because an autoscaler node —
+> which is never in Terraform state — was still attached to the network. Three CSI
+> `pvc-*` volumes were left behind for the same reason: the driver created them, so
+> Terraform never had them.
+>
+> Delete those by hand, re-run, and finish with an explicitly targeted destroy for the
+> network, because a full one cannot even plan once the cluster is gone
+> (`kubernetes_manifest` has no API to talk to). `docs/RUNBOOK.md` §4 has the commands and
+> the ordering rule that goes with them — including: tear the cluster down **before** you
+> delete the companion GitOps repository, never after.
 
 ## What this variant does not give you
 

@@ -13,15 +13,26 @@ Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripp
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
 --- variants/solo/README.md
 +++ variants/ha/README.md
-@@ -1,123 +1,174 @@
+@@ -1,142 +1,174 @@
 -# Variant: solo
 +# Variant: ha
  
--> **Draft quickstart.** Written before the green-field build that verifies it. Every step
--> below is either exercised in the running cluster this variant was derived from, or
--> reasoned from the code — but the sequence as a whole has not yet been run start to
--> finish by someone with no prior knowledge. That run is what turns this into the real
--> README, with measured timings and whatever manual repairs it needed.
+-> **This variant has been built green-field from this tree**, twice, on an empty project —
+-> most recently on 2026-08-12, when it was also used to prove that the companion GitOps
+-> repository reconciles end to end. What that build needed beyond the steps below is
+-> written down: see **"What a first run actually needed"** in
+-> [`../ha/README.md`](../ha/README.md). Eight of its nine items apply to this variant
+-> unchanged; the ninth (`nat_router_hcloud_token`) is `ha`-only.
++> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
++> **never been applied to anything.** It was authored in this repository, derived from the
++> variant that runs a real workload, and at the time of writing it has been verified only
++> by static means: `terraform validate`, and a plan that resolves the full 46-resource
++> graph against an empty state.
+ >
+-> What has *not* happened yet is the test that matters most for a quickstart: nobody
+-> unfamiliar with this repository has walked it start to finish. Until that happens, treat
+-> the ordering as verified and the *explanations* as unproven — the author knows too much
+-> to notice what is missing.
 -
 -One control plane, two general-purpose agents, a dedicated CI node, a dedicated egress
 -node, and a NAT router. The Kubernetes API is reachable only over a Tailscale tailnet;
@@ -33,12 +44,6 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -because two nodes silently stopped rebooting for three days; `system_upgrade_use_drain`
 -is `false` because a drain with nowhere to put the pods cordoned a node for two and a
 -half hours. The comments explain each one. Read them before deleting a line.
-+> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
-+> **never been applied to anything.** It was authored in this repository, derived from the
-+> variant that runs a real workload, and at the time of writing it has been verified only
-+> by static means: `terraform validate`, and a plan that resolves the full 46-resource
-+> graph against an empty state.
-+>
 +> It has **not** been booted. The control-plane kill and the etcd restore that this design
 +> exists to survive have **not** been executed. Until they have, treat every availability
 +> claim here as a design intention rather than a measurement — and read the `solo` variant
@@ -154,20 +159,20 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  ```
  
 -### The build takes two passes, and the first one looks like a failure
-+> **Use a different `key` in `backend.hcl` from any other cluster.** Two clusters sharing
-+> a state key will fight over it and destroy each other's resources. The backend is
-+> partial precisely so this is a decision you make rather than inherit.
- 
+-
 -`kube_api_tailnet_address` is the control plane's address on your tailnet. Tailscale
 -assigns it when the node first joins, so on a cluster that does not exist yet **you
 -cannot know it in advance** — and it is required in the API server's certificate.
-+### Extra step: verify quorum before you trust it
++> **Use a different `key` in `backend.hcl` from any other cluster.** Two clusters sharing
++> a state key will fight over it and destroy each other's resources. The backend is
++> partial precisely so this is a decision you make rather than inherit.
  
 -Set a placeholder inside `100.64.0.0/10`, leave
 -`control_plane_lb_enable_public_interface = true` in `main.tf`, run `init.sh`, then read
 -the assigned address, put it in `secrets.auto.tfvars`, set the flag to `false`, and
 -`terraform apply` again. Full procedure with the reasoning: **`docs/RUNBOOK.md` §2.**
--
++### Extra step: verify quorum before you trust it
+ 
 -Skipping this is why a green-field build fails on the first apply.
 -
 -## Day two
@@ -188,8 +193,6 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
 -`bash apply.sh` is the same thing with Packer and the phased apply skipped.
 +A member that is persistently behind on raft index is a member that will not save you.
-+
-+## What this variant still does not give you
  
 -Two things in this configuration are hashed into Terraform state, so **editing a comment
 -is not always free**: the `helm_release` values block (comments inside it are chart
@@ -204,6 +207,19 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -`restore-protection.sh` puts delete protection back. Run them against a throwaway
 -project only.
 -
+-> **A single `terraform destroy` does not empty the project, and it can fail without
+-> saying why.** Measured on this variant, 2026-08-12: the destroy hung twenty minutes on a
+-> network subnet and ended on `context deadline exceeded`, because an autoscaler node —
+-> which is never in Terraform state — was still attached to the network. Three CSI
+-> `pvc-*` volumes were left behind for the same reason: the driver created them, so
+-> Terraform never had them.
+->
+-> Delete those by hand, re-run, and finish with an explicitly targeted destroy for the
+-> network, because a full one cannot even plan once the cluster is gone
+-> (`kubernetes_manifest` has no API to talk to). `docs/RUNBOOK.md` §4 has the commands and
+-> the ordering rule that goes with them — including: tear the cluster down **before** you
+-> delete the companion GitOps repository, never after.
+-
 -## What this variant does not give you
 -
 -Stated plainly, because a reader coming from EKS/GKE/AKS will assume otherwise:
@@ -214,6 +230,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  which is why `system_upgrade_use_drain = false`.
 -- **A single NAT router** carrying all egress and the forwarded API port.
 -- **etcd is yours.** Backups run; the restore is a manual procedure.
++## What this variant still does not give you
++
 +Fewer than `solo`, but the list is not empty, and every item is structural rather than an
 +omission:
  

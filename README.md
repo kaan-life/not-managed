@@ -20,11 +20,20 @@ served only over a Tailscale tailnet.
 | Losing a control plane | API down until it reboots — pods keep running, nothing schedules | survives |
 | General agents | 2 | 3 |
 | Can you drain a worker? | **No.** Nowhere to put the pods | Yes |
-| Autoscaler | none | 0 → 3 nodes, ~3 min to schedule |
+| Autoscaler | 0 → **1** node, `cx33` | 0 → **3** nodes, `cx33`, ~3 min to schedule |
 | NAT router | 1 — single point of failure for egress *and* the API path | 2, keepalived VIP, second datacentre |
 | Cost, idle | **€76** / month | **€107** / month (1.40×) |
-| Cost, autoscaler at ceiling | — | €138 / month (1.81×) |
-| Proven by | **running a real workload** | static checks only so far — never booted; see its README |
+| Cost, autoscaler at ceiling | €86 / month | €138 / month (1.81×) |
+| Proven by | **running a real workload**, and a green-field build from this tree | a green-field build from this tree: booted, control-plane killed, etcd restored |
+
+> **This table said `solo` had no autoscaler until 2026-08-12, and that was wrong.**
+> `variants/solo/main.tf` declares an `autoscaler_nodepools` block with
+> `min_nodes = 0, max_nodes = 1`, and a green-field build of this variant produced an
+> `…-autoscaled-…` node without being asked to. Both the capability row and the ceiling
+> cost row are corrected above. It is recorded rather than quietly edited because this
+> table is the one thing in the repository a reader is invited to make a decision from,
+> and "we fixed the decision table" is the sort of change a returning reader should be
+> able to see.
 
 **Choose `solo`** if you are one operator, the bill matters, and a control-plane reboot is
 an inconvenience rather than an incident.
