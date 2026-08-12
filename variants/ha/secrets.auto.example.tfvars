@@ -97,7 +97,7 @@ etcd_s3_region     = "<your-s3-bucket-region>"
 # Accepted: the non-routable supernets 100.64.0.0/10, 10.0.0.0/8, 172.16.0.0/12,
 # 192.168.0.0/16, fc00::/7, fd00::/8 — or any IPv4 prefix of /24 or narrower (IPv6: /48 or
 # narrower). Anything broader is refused, including "0.0.0.0/1" + "128.0.0.0/1".
-firewall_kube_api_source = ["100.64.0.0/10"] # Tailscale CGNAT range
+firewall_kube_api_source = ["100.64.0.0/10"]  # Tailscale CGNAT range
 firewall_ssh_source      = ["203.0.113.7/32"] # REPLACE: your egress IP (this is TEST-NET-3, reserved for docs)
 
 # Required by this variant because the NAT routers are redundant: the keepalived pair
@@ -135,4 +135,3 @@ tf_state_secret_key = "<object-storage-secret-key>"
 
 # !! Remove .example after you have added your variables
 # NEVER COMMIT THIS FILE IT CONTAINS YOUR TOKENS
-

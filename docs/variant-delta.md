@@ -1021,7 +1021,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  # value shipped here, and it disabled the restriction entirely while still passing the
  # old validation. The values below are a working, safe default: the Kubernetes API is
 @@ -92,6 +100,13 @@
- firewall_kube_api_source = ["100.64.0.0/10"] # Tailscale CGNAT range
+ firewall_kube_api_source = ["100.64.0.0/10"]  # Tailscale CGNAT range
  firewall_ssh_source      = ["203.0.113.7/32"] # REPLACE: your egress IP (this is TEST-NET-3, reserved for docs)
  
 +# Required by this variant because the NAT routers are redundant: the keepalived pair
@@ -1037,7 +1037,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/variables.tf variants/ha/variables.tf
 --- variants/solo/variables.tf
 +++ variants/ha/variables.tf
-@@ -61,57 +61,51 @@
+@@ -64,57 +64,51 @@
    type        = string
  }
  
@@ -1126,7 +1126,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  }
  
-@@ -245,6 +239,60 @@
+@@ -248,6 +242,60 @@
    }
  }
  
@@ -1187,7 +1187,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  variable "utility_namespaces" {
    type        = list(string)
    description = "List of Kubernetes namespaces to create"
-@@ -403,6 +451,32 @@
+@@ -406,6 +454,32 @@
    }
  }
  

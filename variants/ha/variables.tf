@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 variable "hcloud_token" {
+  type      = string
   sensitive = true
 }
 
@@ -22,11 +23,13 @@ variable "k3s_token" {
 }
 
 variable "robot_user" {
+  type      = string
   sensitive = true
   default   = ""
 }
 
 variable "robot_password" {
+  type      = string
   sensitive = true
   default   = ""
 }
@@ -634,12 +637,26 @@ variable "argocd_webhook_secret" {
 # which is where the S3 backend looks for credentials. Declaring them also keeps
 # Terraform from warning about undeclared variables in an .auto.tfvars file.
 
+# Not referenced by any resource, and that is correct: a backend block cannot read
+# var.*, so init.sh and destroy.sh sed this value out of secrets.auto.tfvars and export
+# it as an AWS_* environment variable for the S3 backend. tflint only sees Terraform
+# references, so it offers to delete it — accepting that fix breaks the bootstrap.
+# The directive has to be the LINE IMMEDIATELY BEFORE the block; with the explanation
+# in between it is silently inert, which is how this was first written.
+# tflint-ignore: terraform_unused_declarations
 variable "tf_state_access_key" {
   description = "S3 access key for Terraform state backend — exported as AWS_ACCESS_KEY_ID by init.sh"
   type        = string
   sensitive   = true
 }
 
+# Not referenced by any resource, and that is correct: a backend block cannot read
+# var.*, so init.sh and destroy.sh sed this value out of secrets.auto.tfvars and export
+# it as an AWS_* environment variable for the S3 backend. tflint only sees Terraform
+# references, so it offers to delete it — accepting that fix breaks the bootstrap.
+# The directive has to be the LINE IMMEDIATELY BEFORE the block; with the explanation
+# in between it is silently inert, which is how this was first written.
+# tflint-ignore: terraform_unused_declarations
 variable "tf_state_secret_key" {
   description = "S3 secret key for Terraform state backend — exported as AWS_SECRET_ACCESS_KEY by init.sh"
   type        = string

@@ -1,0 +1,66 @@
+# gitleaks configuration for this repository.
+#
+# WHAT THIS FILE IS FOR, AND WHAT IT IS NOT FOR. Every entry below suppresses a finding
+# that has been read, traced to a specific commit, and shown not to be a credential. None
+# of them is here because the finding was inconvenient. An allowlist is the most dangerous
+# file in a scanning setup — it is where a real leak goes to be ignored — so each rule is
+# scoped as narrowly as the tool allows and carries the reason it exists. If you add one,
+# add the reasoning with it, and prefer fixing the content over listing it.
+#
+# Run over the full history, which is the only run that means anything:
+#
+#   gitleaks git . --report-format json --report-path leaks.json
+#   jq 'length == 0' leaks.json    # must print true
+#
+# USE `gitleaks git`, NOT `gitleaks dir`. The directory scan reads the working tree
+# including gitignored paths, so it walks variants/*/.terraform/modules/ — the vendored
+# upstream module — and reports its test fixtures and workflow files. Measured: 2 real
+# planted probes against 26 findings from vendored code that is not, and never will be,
+# tracked here. Those 26 are somebody else's repository. The history scan is the one that
+# answers the question "could this repository leak a credential".
+#
+# Measured 2026-08-12: three findings, all three false positives, all three from the
+# initial import commit. Two of them no longer exist at HEAD and are suppressed only for
+# the history.
+
+[extend]
+useDefault = true
+
+# ── 1. A PEM header quoted as documentation ──────────────────────────────────
+# docs/RUNBOOK.md explains that the GitHub App provider accepts PKCS#1 only, and the
+# original text showed the header line so a reader could compare it against their own
+# file. The header is a FORMAT, not a key: there is no key material anywhere near it.
+#
+# HEAD no longer contains it — the section was rewritten to describe the difference in
+# prose ("the word RSA appears in it") precisely so a scanner has nothing to match. This
+# entry therefore covers the history only, and it is deliberately pinned to that one path.
+[[rules]]
+id = "private-key"
+[rules.allowlist]
+paths = ['''^docs/RUNBOOK\.md$''']
+description = "PKCS#1 header quoted as documentation of a file FORMAT; no key material. Rewritten out of HEAD; retained here for history."
+#
+# THE TENSION, STATED RATHER THAN IGNORED. docs/RUNBOOK.md §2 argues against exactly this
+# entry: "the usual remedy is to teach each scanner an exception for the documentation
+# file. Exceptions are how a real key eventually slips past one." That reasoning is right,
+# and it is why HEAD no longer contains the literal.
+#
+# What it cannot reach is the history, and this repository has never been published — no
+# remote, ADR-0003 mandates a NEW public repository with clean history — so rewriting the
+# literal out of the initial import is still available and would delete the need for this
+# entry entirely. That is an M7 decision, listed on its checklist, and it should be made
+# deliberately rather than inherited from whoever wrote this allowlist first.
+
+# ── 2 and 3. Terraform variable references ───────────────────────────────────
+# `etcd-s3-secret-key = var.etcd_s3_secret_key` is the line that passes a secret INTO the
+# module without ever writing it down. The generic-api-key rule sees an assignment whose
+# left side says "secret key" and flags the right side — which is the literal string
+# "var.etcd_s3_secret_key", i.e. exactly the pattern that proves the value is NOT in the
+# file. Suppressing a bare `var.<name>` right-hand side cannot hide a credential, because
+# a credential is not a valid Terraform variable reference.
+[[rules]]
+id = "generic-api-key"
+[rules.allowlist]
+regexTarget = "match"
+regexes = ['''=\s*var\.[a-z0-9_]+\s*$''']
+description = "A Terraform variable reference is the absence of a secret, not the presence of one."
