@@ -112,3 +112,63 @@ omission:
 
 `docs/managed-k8s-parity.md` accounts for all twelve capabilities, including the six no
 self-hosted stack can match.
+
+## What a first run actually needed
+
+This variant has been built from a clean checkout on an empty project. Every item below is
+something that first run had to work around, in the order it came up. None of them is a
+defect you should have to rediscover.
+
+**Before `terraform plan` will even run**
+
+1. **Build the Packer snapshot first.** The image data sources are evaluated at *plan*
+   time, not apply time, so a plan against a project with no snapshot fails outright.
+   `init.sh` does this in the right order; if you drive Terraform by hand, do it yourself.
+2. **`etcd_s3_endpoint` must be a bare host** — `fsn1.example.com`, never
+   `https://fsn1.example.com`. `variables.tf` rejects a scheme at plan time now, and the
+   reason that validation exists is worth reading in `docs/RUNBOOK.md` §4: with a scheme,
+   snapshots keep *saving* and only the *restore* breaks.
+
+**Before the first apply will succeed**
+
+3. **`firewall_ssh_source` needs your own public /32**, not just the tailnet range.
+   Terraform reaches the NAT router over its public address to run provisioners; with only
+   `100.64.0.0/10` the apply hangs and then fails on `dial tcp …:22: i/o timeout`.
+4. **`bootstrap_phase = true` for the first apply, false afterwards.** The tailnet address
+   the API certificate needs does not exist until the control plane has joined the tailnet.
+   `docs/RUNBOOK.md` §2 explains the two passes; the flag exists so it is one decision.
+5. **`tailscale_advertise_routes` must differ per cluster** if you put two clusters from
+   this repository on one tailnet. Every node advertises it — the line is in
+   `preinstall_exec` — so two clusters contest the same prefix and Tailscale elects one
+   primary for it. Give the second cluster its own range, or set the list to `[]` and
+   reach it by node address.
+
+**Failures you may hit that are not your configuration**
+
+6. **`error during placement (resource_unavailable)`.** A *spread* placement group needs a
+   distinct physical host per server, and a busy location may not have enough free at that
+   moment. Two things that do **not** fix it: the server type (a standalone server of the
+   same type places fine) and lowering `-parallelism` (measured 2026-08-12: it failed with
+   `-parallelism=1` as well). What works is fewer servers in the group, another location,
+   or waiting.
+
+**After the cluster is up**
+
+7. **A private companion GitOps repository cannot sync until the ArgoCD repository
+   credentials exist**, and those are created in the phase that runs *after* the cluster
+   (`terraform_data.github_secrets` → a `repo-creds` secret). Until then ArgoCD reports
+   `failed to list refs: authentication required: Repository not found` — which is the
+   *same* message GitHub returns for a `repoURL` that does not exist at all. Two very
+   different causes, one string; check the secret before you go looking at the URL.
+8. **Namespace names must equal the companion repository's top-level directory names.**
+   The root ApplicationSet sets `path: {{environment}}` from
+   `utility_namespaces + app_namespaces`. A namespace with no matching directory produces
+   an Application stuck on `ComparisonError: <name>: app path does not exist` — and it
+   reports `Healthy` while doing so, because an Application with zero resources is
+   trivially healthy. Never read the health column alone.
+
+**When you tear it down**
+
+9. `terraform destroy` does not empty the project by itself, and it can hang for twenty
+   minutes without naming why. Read the orphan and ordering notes in `docs/RUNBOOK.md` §4
+   before you need them, and run `assert-no-orphans.sh` afterwards.

@@ -86,10 +86,19 @@ SECURITY.md           private reporting channel, threat model, what is out of sc
 This tree is being prepared for publication and is **not finished**.
 
 - `variants/solo` is a de-identified copy of a configuration that runs a real workload.
-- `variants/ha` has **never been applied**. It validates and plans cleanly against an
-  empty state; it has not been booted, and neither the control-plane kill nor the etcd
-  restore has been executed. That is the next step, and until it happens the availability
-  claims are design intentions.
+- **`variants/ha` has now been booted, and both availability claims have been executed
+  rather than asserted.** On a throwaway project, from a clean checkout of this tree and
+  nothing else:
+  - **control-plane kill** (2026-08-11) — `poweroff`, not a graceful shutdown, on one of
+    the three. During the outage: 10/10 API probes succeeded, and an etcd *write* went
+    through on the surviving two members. The write is the evidence; a readable API only
+    proves the load balancer is doing its job. The node rejoined ~30 s after power-on.
+  - **etcd restore** (2026-08-12, twice) — full `--cluster-reset` from a snapshot, checked
+    with a marker that had to survive and a second marker that had to disappear, because
+    "the cluster came back" is also what a cluster that lost nothing does. The second run
+    deleted the node's local snapshot copy first and restored from the bucket alone.
+    Measured RTO for the mechanical part: **under five minutes**. `docs/RUNBOOK.md` §4 is
+    now written as executed, and running it is what found the two defects fixed in it.
 - **CI runs green, and it earned that by going red first.** All nine jobs pass with no
   credentials of any kind. Its first run found two real defects: `required_version` claimed
   `~> 1.10` while upstream's own validation cannot parse on anything below 1.12, and the
@@ -97,7 +106,17 @@ This tree is being prepared for publication and is **not finished**.
   maintainer's shell and failed for everybody else's. Both are fixed; the version floor is
   now bisected rather than guessed, and both bounds of the constraint run on every pull
   request.
-- Still to come: the finished documentation set. Both variant READMEs are drafts marked as
-  such, and their quickstarts have not been walked end to end by anyone starting from an
-  empty account — so the boot time, the real cost and the manual repairs a first run needs
-  are not in them yet.
+- **Measured build times**, from a clean checkout on a throwaway project, excluding the
+  Packer snapshot (~5 min, and reusable across builds):
+
+  | | `terraform apply`, first pass | to all nodes `Ready` | teardown |
+  |---|---|---|---|
+  | `ha`, 3 control planes + 1 agent + NAT router | ~15 min (102 resources) | same pass | ~4 min |
+
+  The teardown figure is the *targeted* destroy that actually completes — see the orphan
+  and ordering notes in `docs/RUNBOOK.md` §4 before you rely on a single `destroy`.
+
+- Still to come: `variants/solo/README.md` and `variants/ha/README.md` are drafts. What a
+  first run actually needed is now written down — see **"What a first run actually needed"**
+  in `variants/ha/README.md` — but neither quickstart has been walked end to end by someone
+  who has not read this repository before, which is the test that finds the rest.
