@@ -274,12 +274,38 @@ help you recover the other.
 
 ## 4. etcd: what is backed up, and how to restore it
 
-> **This procedure has been written but not executed.** It is assembled from k3s'
-> documented `--cluster-reset` behaviour and from what this configuration actually sets,
-> and every command below is one you can read in advance. It has not been run end to end
-> against a real cluster, and until it has, treat the RTO as unknown rather than short.
-> Executing it — deliberately, on the `ha` variant, after killing a control-plane node —
-> is the step that turns this section from paper into a procedure.
+> **This procedure has been executed, twice, on 2026-08-12.** It was run end to end on a
+> throwaway `ha` cluster with three control planes — a real three-member etcd, because a
+> restore onto a single member proves almost nothing about the operation you would actually
+> be performing.
+>
+> **How it was checked, and why that matters.** "The cluster came back" is not evidence: a
+> cluster that never lost anything also comes back. The test used two marker ConfigMaps
+> instead. `restore-marker-pre` was created *before* the snapshot and had to **survive**;
+> `restore-marker-post` was created *after* it and had to **disappear**. Both rounds:
+> pre present, post gone, all four nodes `Ready`, `kube-system` entirely
+> `Running`/`Completed`. If you adapt this procedure, keep that shape — a check that cannot
+> fail is not a check.
+>
+> **The second round deleted the local snapshot copy first**, so the node had nothing but
+> the bucket to restore from. That is the case the backup exists for, and it is the one
+> people forget to test:
+>
+> ```
+> Retrieving etcd snapshot n5restore-… from S3
+> S3 download complete for /var/lib/rancher/k3s/server/db/snapshots/n5restore-…
+> restored snapshot … kvstore restored current-rev:4933
+> ```
+>
+> **Measured RTO: under five minutes** from `systemctl stop k3s` on the first node to all
+> nodes `Ready` again, on a cluster with a 24 MB snapshot. That is the mechanical part
+> only. It excludes deciding to restore, choosing which snapshot, and everything you will
+> discover afterwards about what changed between the snapshot and now.
+>
+> Two defects in this section were found by running it rather than reading it: the missing
+> server-URL step (§1b below) and the snapshot listing command immediately below. Both are
+> fixed here. Assume there are more, and re-run this on a throwaway cluster after any k3s
+> minor-version bump.
 
 Terraform state and etcd are two different backups solving two different problems.
 Restoring etcd rebuilds *Kubernetes objects*: namespaces, secrets, deployments, ArgoCD
@@ -328,10 +354,30 @@ on Monday and the snapshot that predates it is already gone.
 Verify you can list snapshots *before* an incident, not during one:
 
 ```bash
-sudo k3s etcd-snapshot list --s3 \
-  --s3-bucket=<bucket> --s3-endpoint=<endpoint> --s3-region=<region> \
-  --s3-access-key=<key> --s3-secret-key=<secret>
+sudo k3s etcd-snapshot list
 ```
+
+**No `--s3` flag, and no S3 credentials on the command line.** `config.yaml` already sets
+`etcd-s3: "true"` together with the bucket, endpoint, region and keys, so k3s picks all of
+it up on its own. Passing `--s3` as well is not merely redundant — it aborts:
+
+```
+Incorrect Usage: Cannot use two forms of the same flag: etcd-s3 s3
+```
+
+This runbook told you to pass it until 2026-08-12, which meant the one step it asks you to
+rehearse before an incident was itself broken. Measured output of the working form — note
+that it lists the bucket copy and the on-disk copy as separate rows, which is how you
+confirm the upload actually happened:
+
+```
+Name                              Location                                              Size      Created
+n5restore-…-1786522709            s3://<bucket>/n5restore-…-1786522709                  24379424  2026-08-12T08:18:29Z
+n5restore-…-1786522709            file:///var/lib/rancher/k3s/server/db/snapshots/…     24379424  2026-08-12T08:18:29Z
+```
+
+If a snapshot appears only as `file://`, the upload is failing and you have no off-node
+backup — which is exactly the failure the bare-host rule above produces.
 
 ### Restoring
 
@@ -403,6 +449,41 @@ Two things that will surprise you:
   on 2026-08-11: a green-field teardown reported success and left one server plus the
   Network billing. `scripts/assert-no-orphans.sh` is what catches this; run it after every
   destroy and delete what it lists by hand.
+
+  **Re-measured on 2026-08-12, and it is worse than "reported success".** The same
+  teardown left **three** classes behind, not one, and the second one is the reason the
+  first is easy to miss:
+
+  1. the autoscaler node, as above;
+  2. **CSI `pvc-*` volumes** — provisioned by the driver, never in Terraform state, so
+     `destroy` never had them (this is the same gap `enable_delete_protection` has: it
+     covers the volumes Terraform declares, not the ones Kubernetes asks for);
+  3. because (1) was still attached to it, `hcloud_network_subnet` sat in
+     `Still destroying...` for **twenty minutes** and the run ended on
+     `Error: Get "https://api.hetzner.cloud/v1/networks/…": context deadline exceeded`.
+
+  So the destroy does not necessarily *claim* success — it can hang for twenty minutes and
+  then fail, with the actual cause (one stray server) never named. Delete the orphans by
+  hand first, then re-run.
+
+  **And the last resource is a special case.** Once the cluster is gone, a full
+  `terraform destroy` cannot even plan: `kubernetes_manifest.letsencrypt` fails with
+  `cannot create REST client: no client config`, because the provider has no API to talk
+  to. Finish with an explicitly targeted destroy instead:
+
+  ```bash
+  terraform destroy -target='module.kube-hetzner.hcloud_network_subnet.control_plane[0]' \
+                    -target='module.kube-hetzner.hcloud_network.k3s[0]'
+  ```
+
+- **Tear the cluster down BEFORE deleting the companion GitOps repository.** Measured
+  2026-08-12: with the repo already gone, `terraform destroy` fails during *planning* with
+  `failed to create OAuth token from GitHub App: 404` — the App installation cannot mint a
+  token without a repository, and Terraform configures the `github` provider even when the
+  state contains no `github` resource at all (0 of 123, in the run that hit this). Nothing
+  is destroyed. Targeting the cloud resources routes around it —
+  `-target=module.kube-hetzner -target=helm_release.argocd -target=time_sleep.wait_for_argocd`
+  destroyed all 102 — but the cheap fix is ordering: cluster first, repository second.
 - **Terraform does not know a restore happened.** Run `terraform plan` afterwards and
   read it carefully. Resources it created after the snapshot still exist in the cloud and
   in Terraform state, but the Kubernetes objects backing them may not — the plan is the
