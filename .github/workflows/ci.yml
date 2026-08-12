@@ -129,13 +129,13 @@ jobs:
         run: ./variants/${{ matrix.variant }}/scripts/vendor-local-path.sh "${{ steps.pin.outputs.version }}" --check
 
   module-pin:
-    name: kube-hetzner 2.19.2 still resolves to the same commit
+    name: kube-hetzner 3.1.0 still resolves to the same commit
     runs-on: ubuntu-latest
     steps:
       # A Terraform registry version is a mutable label pointing at an immutable commit.
-      # The registry resolves `version = "2.19.2"` to a git ref at publication time and
+      # The registry resolves `version = "3.1.0"` to a git ref at publication time and
       # serves it in the x-terraform-get header, so the pin is as strong as that mapping
-      # and no stronger. If the owner ever republishes 2.19.2 against a different commit,
+      # and no stronger. If the owner ever republishes 3.1.0 against a different commit,
       # every `terraform init` in the world starts fetching different code under the same
       # version string — and nothing in the lockfile would notice, because module sources
       # are not lockfile-tracked. This job is the notice.
@@ -145,8 +145,13 @@ jobs:
       - name: Resolve the pinned version and compare the commit
         run: |
           set -euo pipefail
-          expected=08e59a31197ce8a24d80805e5062ee3ed8ec024d
-          url=https://registry.terraform.io/v1/modules/kube-hetzner/kube-hetzner/hcloud/2.19.2/download
+          # KEEP IN SYNC with the `version =` in variants/*/main.tf. Until 2026-08-12 this
+          # job checked 2.19.2 while both variants had already moved to 3.1.0 — green,
+          # and guarding nothing. A guard pinned to a version the repository no longer
+          # uses is worse than no guard: it reports that the thing it is not watching
+          # is fine.
+          expected=ed524efe85377a62f1aecf34422c8ab1b073a75b
+          url=https://registry.terraform.io/v1/modules/kube-hetzner/kube-hetzner/hcloud/3.1.0/download
           header=$(curl -fsS -D - -o /dev/null "$url" | tr -d '\r' | grep -i '^x-terraform-get:' || true)
           if [ -z "$header" ]; then
             echo "::error::the registry returned no x-terraform-get header for $url" >&2
@@ -155,12 +160,12 @@ jobs:
           echo "$header"
           actual="${header##*ref=}"
           if [ "$actual" != "$expected" ]; then
-            echo "::error::kube-hetzner 2.19.2 now resolves to $actual, expected $expected." \
+            echo "::error::kube-hetzner 3.1.0 now resolves to $actual, expected $expected." \
                  "The same version string is serving different code. Do not upgrade past this" \
                  "job — investigate what changed upstream first." >&2
             exit 1
           fi
-          echo "2.19.2 -> $actual (unchanged)"
+          echo "3.1.0 -> $actual (unchanged)"
 
   dco:
     name: DCO sign-off
