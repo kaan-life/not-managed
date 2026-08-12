@@ -68,6 +68,19 @@ jobs:
       - name: terraform validate
         run: terraform validate
 
+      # Runs offline. Every case in firewall_validations.tftest.hcl is an expect_failures
+      # run against a variable validation, and all five declared providers are replaced by
+      # mock_provider — so this needs no Hetzner, GitHub or Kubernetes credential, which is
+      # the same hard requirement every other job here meets.
+      #
+      # `fmt -check` above is scoped to *.tf and therefore does not cover this file, so
+      # format it explicitly rather than leaving one file in the tree unchecked.
+      - name: terraform fmt -check (tests)
+        run: terraform fmt -check *.tftest.hcl
+
+      - name: terraform test
+        run: terraform test
+
   variant-delta:
     name: variant delta is current
     runs-on: ubuntu-latest

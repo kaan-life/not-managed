@@ -13,7 +13,7 @@ Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripp
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
 --- variants/solo/README.md
 +++ variants/ha/README.md
-@@ -1,123 +1,114 @@
+@@ -1,123 +1,174 @@
 -# Variant: solo
 +# Variant: ha
  
@@ -154,20 +154,20 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  ```
  
 -### The build takes two passes, and the first one looks like a failure
--
--`kube_api_tailnet_address` is the control plane's address on your tailnet. Tailscale
--assigns it when the node first joins, so on a cluster that does not exist yet **you
--cannot know it in advance** — and it is required in the API server's certificate.
 +> **Use a different `key` in `backend.hcl` from any other cluster.** Two clusters sharing
 +> a state key will fight over it and destroy each other's resources. The backend is
 +> partial precisely so this is a decision you make rather than inherit.
+ 
+-`kube_api_tailnet_address` is the control plane's address on your tailnet. Tailscale
+-assigns it when the node first joins, so on a cluster that does not exist yet **you
+-cannot know it in advance** — and it is required in the API server's certificate.
++### Extra step: verify quorum before you trust it
  
 -Set a placeholder inside `100.64.0.0/10`, leave
 -`control_plane_lb_enable_public_interface = true` in `main.tf`, run `init.sh`, then read
 -the assigned address, put it in `secrets.auto.tfvars`, set the flag to `false`, and
 -`terraform apply` again. Full procedure with the reasoning: **`docs/RUNBOOK.md` §2.**
-+### Extra step: verify quorum before you trust it
- 
+-
 -Skipping this is why a green-field build fails on the first apply.
 -
 -## Day two
@@ -190,9 +190,6 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +A member that is persistently behind on raft index is a member that will not save you.
 +
 +## What this variant still does not give you
-+
-+Fewer than `solo`, but the list is not empty, and every item is structural rather than an
-+omission:
  
 -Two things in this configuration are hashed into Terraform state, so **editing a comment
 -is not always free**: the `helm_release` values block (comments inside it are chart
@@ -217,6 +214,11 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  which is why `system_upgrade_use_drain = false`.
 -- **A single NAT router** carrying all egress and the forwarded API port.
 -- **etcd is yours.** Backups run; the restore is a manual procedure.
++Fewer than `solo`, but the list is not empty, and every item is structural rather than an
++omission:
+ 
+-`docs/managed-k8s-parity.md` accounts for all of it, row by row, with what it would cost
+-to close each gap.
 +- **No managed control-plane SLA.** Three control planes are three you maintain.
 +- **No node auto-repair.** The autoscaler replaces nodes it manages; the static pools
 +  have no health-driven replacement anywhere in kube-hetzner 2.19.2. A NotReady static
@@ -227,11 +229,97 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +  latency domain than the ~1 ms zones managed Kubernetes spreads across.
 +- **No workload identity.** Pods keep long-lived secrets.
 +- **One cloud account** remains a single point of failure for everything in it.
- 
--`docs/managed-k8s-parity.md` accounts for all of it, row by row, with what it would cost
--to close each gap.
++
 +`docs/managed-k8s-parity.md` accounts for all twelve capabilities, including the six no
 +self-hosted stack can match.
++
++## What a first run actually needed
++
++This variant has been built from a clean checkout on an empty project. Every item below is
++something that first run had to work around, in the order it came up. None of them is a
++defect you should have to rediscover.
++
++**Before `terraform plan` will even run**
++
++1. **Build the Packer snapshot first.** The image data sources are evaluated at *plan*
++   time, not apply time, so a plan against a project with no snapshot fails outright.
++   `init.sh` does this in the right order; if you drive Terraform by hand, do it yourself.
++2. **`etcd_s3_endpoint` must be a bare host** — `fsn1.example.com`, never
++   `https://fsn1.example.com`. `variables.tf` rejects a scheme at plan time now, and the
++   reason that validation exists is worth reading in `docs/RUNBOOK.md` §4: with a scheme,
++   snapshots keep *saving* and only the *restore* breaks.
++
++**Before the first apply will succeed**
++
++3. **`firewall_ssh_source` needs your own public /32**, not just the tailnet range.
++   Terraform reaches the NAT router over its public address to run provisioners; with only
++   `100.64.0.0/10` the apply hangs and then fails on `dial tcp …:22: i/o timeout`.
++4. **`bootstrap_phase = true` for the first apply, false afterwards.** The tailnet address
++   the API certificate needs does not exist until the control plane has joined the tailnet.
++   `docs/RUNBOOK.md` §2 explains the two passes; the flag exists so it is one decision.
++5. **`tailscale_advertise_routes` must differ per cluster** if you put two clusters from
++   this repository on one tailnet. Every node advertises it — the line is in
++   `preinstall_exec` — so two clusters contest the same prefix and Tailscale elects one
++   primary for it. Give the second cluster its own range, or set the list to `[]` and
++   reach it by node address.
++
++**Failures you may hit that are not your configuration**
++
++6. **`error during placement (resource_unavailable)`.** A *spread* placement group needs a
++   distinct physical host per server, and a busy location may not have enough free at that
++   moment. Two things that do **not** fix it: the server type (a standalone server of the
++   same type places fine) and lowering `-parallelism` (measured 2026-08-12: it failed with
++   `-parallelism=1` as well). What works is fewer servers in the group, another location,
++   or waiting.
++
++**After the cluster is up**
++
++7. **A private companion GitOps repository cannot sync until the ArgoCD repository
++   credentials exist**, and those are created in the phase that runs *after* the cluster
++   (`terraform_data.github_secrets` → a `repo-creds` secret). Until then ArgoCD reports
++   `failed to list refs: authentication required: Repository not found` — which is the
++   *same* message GitHub returns for a `repoURL` that does not exist at all. Two very
++   different causes, one string; check the secret before you go looking at the URL.
++8. **Namespace names must equal the companion repository's top-level directory names.**
++   The root ApplicationSet sets `path: {{environment}}` from
++   `utility_namespaces + app_namespaces`. A namespace with no matching directory produces
++   an Application stuck on `ComparisonError: <name>: app path does not exist` — and it
++   reports `Healthy` while doing so, because an Application with zero resources is
++   trivially healthy. Never read the health column alone.
++
++**When you tear it down**
++
++9. `terraform destroy` does not empty the project by itself, and it can hang for twenty
++   minutes without naming why. Read the orphan and ordering notes in `docs/RUNBOOK.md` §4
++   before you need them, and run `assert-no-orphans.sh` afterwards.
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/firewall_validations.tftest.hcl variants/ha/firewall_validations.tftest.hcl
+--- variants/solo/firewall_validations.tftest.hcl
++++ variants/ha/firewall_validations.tftest.hcl
+@@ -1,5 +1,11 @@
+ # Native `terraform test` for the firewall allowlists.
+ #
++# This file is the solo variant's, with one line added: `ha` requires
++# nat_router_hcloud_token as well, because enable_redundancy gives the NAT routers their
++# own token. ADR-0007 keeps the variants as independent copies rather than a shared module,
++# so the duplication is the point — and tools/gen-variant-delta.sh plus the drift-guard job
++# are what stop the two copies from quietly diverging.
++#
+ # WHY EVERY RUN IS A NEGATIVE ONE. These runs assert that bad input is REJECTED. That is
+ # not laziness about the happy path: a positive run would have to complete a `plan`, and a
+ # plan of this configuration reaches Hetzner, GitHub and a live Kubernetes API. CI for a
+@@ -38,7 +44,11 @@
+ mock_provider "time" {}
+ 
+ variables {
+-  hcloud_token                = "not-a-token"
++  hcloud_token = "not-a-token"
++  # 64 characters, because ha validates the length at plan time. Deliberately not
++  # hex: a random-looking 64-char hex string is exactly what a secret scanner should
++  # flag, and a fixture that trips gitleaks on every run is a fixture nobody keeps.
++  nat_router_hcloud_token     = "not-a-real-token-this-is-a-terraform-test-placeholder-value-0000"
+   github_app_id               = "0"
+   github_app_installation_id  = "0"
+   github_app_private_key_path = "secrets/your-github-app.pem.example"
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/github.tf variants/ha/github.tf
 --- variants/solo/github.tf
 +++ variants/ha/github.tf
