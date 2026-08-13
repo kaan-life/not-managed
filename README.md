@@ -60,6 +60,20 @@ Neither variant is managed Kubernetes, and six of the twelve capabilities in
 The parity document gives each one a cost, a mechanism if there is one, and the residual
 risk if there is not. It is the most useful thing in this repository.
 
+**You will be running BUSL-licensed CLIs.** Terraform has been under the Business Source
+License since 2023, and so has Packer, which the first build needs for the MicroOS
+snapshot. The *providers* are MPL-2.0 and the configuration here is Apache-2.0 — the
+licence question is about the tools, not this code — but if your organisation has a policy
+against BUSL tooling, you need to know that before you clone rather than after.
+
+**OpenTofu exists as an MPL-2.0 alternative and is untested here.** No compatibility claim
+is made, because none has been tested: CI runs Terraform only, and the S3 backend uses
+native `use_lockfile` state locking whose OpenTofu equivalence nobody has verified. Adding
+a `tofu` CI job is about ten lines if someone wants the guarantee — see
+`docs/adr/0004-terraform-only-opentofu-untested.md`, which has said since 2026-08-05 that
+this README states the position. Until 2026-08-13 it did not; a reader coming to the
+repository cold noticed the ADR promising something the README never said.
+
 ## The comments are the point
 
 Most of the value here is not the HCL — it is why each line exists. A pinned CSI version

@@ -34,7 +34,7 @@ curl -sS -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/p
 | Volumes (100 GB) | ✓ | ✓ | €6.92 |
 | Primary IPv4 | 1 — NAT router | 2 — active + standby NAT router | €1.21 |
 | Snapshots (~1.4 GB MicroOS) | ✓ | ✓ | €0.02 |
-| Autoscaler pool at `min_nodes = 0` | — | idle | €0.00 |
+| Autoscaler pool at `min_nodes = 0` | idle | idle | €0.00 |
 | **Total, idle** | **€76.40** | | **€107.19** |
 
 **Ratio: 1.40×.**
@@ -48,6 +48,12 @@ and it is easy to miss when reading the configuration.
 `min_nodes = 0` means the idle bill above is the real one. But an autoscaler with no
 upper bound has an unbounded monthly cost, and "it only scales when it needs to" is not a
 budget. `max_nodes` is a cost ceiling first and a capacity limit second.
+
+**Both variants have one.** `solo` runs `min_nodes = 0, max_nodes = 1`, so its ceiling is
+one cx33 above idle: **€86.67**. `ha` runs `max_nodes = 3`. Until 2026-08-12 the row above
+showed a dash for `solo` and the comparison table in the root README said it had no
+autoscaler at all — both wrong, and both found the same way: a green-field build of `solo`
+produced an `…-autoscaled-…` node that nothing in the documentation predicted.
 
 | `max_nodes` | Worst-case monthly | Ratio to solo |
 |---|---|---|

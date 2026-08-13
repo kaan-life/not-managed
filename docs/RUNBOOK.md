@@ -104,10 +104,21 @@ build used to fail outright.
 ### Pass 1 — bring the control plane up so Tailscale can address it
 
 1. Set every other variable in `secrets.auto.tfvars`.
-2. Set `kube_api_tailnet_address` to a placeholder inside the accepted range — the
-   variable rejects public addresses, so use something in `100.64.0.0/10`.
-3. Leave the public control-plane load-balancer interface **enabled**:
-   in `main.tf`, `control_plane_lb_enable_public_interface = true`.
+2. Leave `kube_api_tailnet_address` **empty**. Empty is the bootstrap value, not an
+   oversight — the address does not exist yet, and both of the variable's validations
+   admit `""` on purpose. A placeholder inside `100.64.0.0/10` also passes validation, but
+   it is worse: it is a plausible-looking address that belongs to no node, and pass 2 has
+   no way to tell it apart from a real one you forgot to update.
+3. Set `bootstrap_phase = true`.
+
+   **This is one flag, not three settings.** Pass 1 needs the tailnet SAN dropped, the
+   control-plane load balancer's public interface kept open, and the kubeconfig pointed at
+   that interface — and those have to move together. `bootstrap_phase` moves them.
+
+   Until 2026-08-12 this runbook said to set
+   `control_plane_lb_enable_public_interface = true` "in `main.tf`" instead. **There is no
+   such input** — `grep` it in `variables.tf` and you get nothing. Two independent readers
+   coming to this repository cold both stopped here, which is how it was found.
 4. `bash init.sh` — builds the MicroOS snapshot with Packer and runs the phased apply.
 
 The node boots, `preinstall_exec` installs Tailscale and runs `tailscale up`, and the
@@ -117,7 +128,9 @@ node registers with your tailnet.
 
 5. Read the assigned address: `tailscale status`, or the Tailscale admin console.
 6. Put it in `secrets.auto.tfvars` as `kube_api_tailnet_address`.
-7. Set `control_plane_lb_enable_public_interface = false`.
+7. Set `bootstrap_phase = false` — or simply delete the line, since `false` is the default.
+   **Leaving it `true` is a real exposure**, not a cosmetic one: it keeps the API reachable
+   from the public internet, gated only by `firewall_kube_api_source`.
 8. `terraform apply`. The API server certificate is reissued with the new SAN, and the
    load balancer's public interface is removed.
 
@@ -447,8 +460,21 @@ Two things that will surprise you:
   cluster autoscaler, never enter Terraform state, and so survive a destroy — and a
   surviving node holds the private Network, which then cannot be deleted either. Measured
   on 2026-08-11: a green-field teardown reported success and left one server plus the
-  Network billing. `scripts/assert-no-orphans.sh` is what catches this; run it after every
-  destroy and delete what it lists by hand.
+  Network billing. Check for it after every destroy, with the project's own API token:
+
+  ```bash
+  for r in server volume floating-ip load-balancer network ssh-key placement-group; do
+    printf '%-16s' "$r"; hcloud "$r" list -o noheader | wc -l
+  done
+  ```
+
+  Every line must read `0`. Anything else is billing you forgot about, and the Network in
+  particular cannot be deleted while a stray server still sits in it.
+
+  (Until 2026-08-12 this line named a `scripts/assert-no-orphans.sh` instead. That script
+  is green-field test tooling for the throwaway project and is deliberately **not**
+  published — so this runbook was prescribing a file no reader of it could have. Two
+  independent readers went looking for it and found nothing.)
 
   **Re-measured on 2026-08-12, and it is worse than "reported success".** The same
   teardown left **three** classes behind, not one, and the second one is the reason the

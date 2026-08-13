@@ -3,9 +3,20 @@ hcloud_token   = ""
 robot_user     = ""
 robot_password = ""
 
-# k3s cluster-join-token (optioneel; leeg laten = module genereert er zelf één).
-# Rotatieprocedure: zie variable "k3s_token" in variables.tf.
-k3s_token = "<48-tekens-alfanumeriek>"
+# k3s cluster-join token. OPTIONAL, and commented out on purpose: leave the line alone and
+# the module generates one for you, which is what you want unless you are restoring a
+# cluster. Rotation procedure: see variable "k3s_token" in variables.tf — rotate on the
+# server BEFORE pushing config, never the other way round.
+#
+# COMMENTED RATHER THAN GIVEN A PLACEHOLDER, because a placeholder here is not inert:
+# whatever string is on this line becomes the cluster join secret. Until 2026-08-12 the
+# line read `k3s_token = "<48-tekens-alfanumeriek>"`, so a forker who did not replace it
+# shipped a cluster whose join token is published in this repository.
+#
+# And not `= ""` either: the module validates `cluster_token must be null or a non-empty
+# token string`, so an empty string fails the plan. Absent means null, which means
+# generated.
+# k3s_token = "your-own-48-character-token-if-you-are-restoring-a-cluster"
 
 github_org_url              = "https://github.com/your-org"
 github_repo_name            = "your-gitops-repo"
@@ -19,6 +30,12 @@ github_oauth_client_secret = "<github-oauth-app-client-secret>"
 # Tekton EventListener webhook signing secret — generate with: openssl rand -hex 32
 # Use this same value when registering the webhook on each GitHub *application*
 # repository (the one whose push should start a build).
+#
+# THERE IS NO TERRAFORM VARIABLE FOR THIS, and that is not an omission on this line: the
+# secret belongs to the companion GitOps repository, where the EventListener lives, and it
+# is applied there as a SealedSecret. Nothing in this file consumes it. It is written here
+# because this is where you are already generating secrets, and because a reader who meets
+# the EventListener first has no way back to this instruction.
 
 # ArgoCD webhook shared secret — separate from the Tekton one above. Register it as
 # the secret on a push webhook on your *gitops* repo, pointing at
@@ -96,9 +113,20 @@ tailscale_auth_key = "<your-tailscale-auth-key>"
 
 # The control-plane node's tailnet address. Serves double duty: certificate SAN and the
 # address kubeconfig dials. Tailscale assigns it when the control plane first joins, so
-# on a NEW cluster you cannot know it up front — apply once without it (public LB still
-# enabled), read the assigned address, set it here, apply again. See docs/RUNBOOK.md.
-kube_api_tailnet_address = "100.64.0.1" # REPLACE with your control plane's tailnet address
+# on a NEW cluster you cannot know it up front. Build in two passes — see docs/RUNBOOK.md §2.
+#
+# LEAVE IT EMPTY FOR PASS 1, and set bootstrap_phase = true below. Empty is the bootstrap
+# value; both of the variable's validations admit "" on purpose. This line used to ship a
+# plausible-looking 100.64.0.1, which passes validation while belonging to no node — and
+# pass 2 cannot tell that apart from a real address you forgot to update.
+kube_api_tailnet_address = ""
+
+# Pass 1 of a green-field build: true for the FIRST apply of a cluster that does not exist
+# yet, false (or absent) for every apply after it. One flag rather than three settings that
+# have to move together. Leaving it true keeps the Kubernetes API reachable from the public
+# internet, gated only by firewall_kube_api_source — so delete this line once you are past
+# pass 2 rather than leaving it lying around set to false.
+bootstrap_phase = true
 
 # ─── Terraform Remote State Backend: credentials only ────────────────────────
 # WHICH state store to use is not set here. providers.tf declares a partial backend and

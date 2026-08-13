@@ -13,7 +13,7 @@ Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripp
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
 --- variants/solo/README.md
 +++ variants/ha/README.md
-@@ -1,142 +1,174 @@
+@@ -1,153 +1,185 @@
 -# Variant: solo
 +# Variant: ha
  
@@ -23,11 +23,9 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -> written down: see **"What a first run actually needed"** in
 -> [`../ha/README.md`](../ha/README.md). Eight of its nine items apply to this variant
 -> unchanged; the ninth (`nat_router_hcloud_token`) is `ha`-only.
-+> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
-+> **never been applied to anything.** It was authored in this repository, derived from the
-+> variant that runs a real workload, and at the time of writing it has been verified only
-+> by static means: `terraform validate`, and a plan that resolves the full 46-resource
-+> graph against an empty state.
++> **This variant has been booted, and the two failure modes it exists to survive have been
++> executed rather than asserted.** On a throwaway project, from a clean checkout of this
++> tree:
  >
 -> What has *not* happened yet is the test that matters most for a quickstart: nobody
 -> unfamiliar with this repository has walked it start to finish. Until that happens, treat
@@ -44,10 +42,22 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -because two nodes silently stopped rebooting for three days; `system_upgrade_use_drain`
 -is `false` because a drain with nowhere to put the pods cordoned a node for two and a
 -half hours. The comments explain each one. Read them before deleting a line.
-+> It has **not** been booted. The control-plane kill and the etcd restore that this design
-+> exists to survive have **not** been executed. Until they have, treat every availability
-+> claim here as a design intention rather than a measurement — and read the `solo` variant
-+> if you need something whose failure modes are known.
++> - **control-plane kill** (2026-08-11) — `poweroff`, not a graceful shutdown, on one of
++>   the three. During the outage: 10/10 API probes succeeded and an etcd *write* went
++>   through on the surviving two members. The write is the evidence; a readable API only
++>   proves the load balancer is doing its job.
++> - **etcd restore** (2026-08-12, twice) — full `--cluster-reset`, checked with a marker
++>   that had to survive and a second marker that had to disappear. The second run deleted
++>   the node's local snapshot first and restored from the bucket alone. Measured RTO for
++>   the mechanical part: under five minutes. `docs/RUNBOOK.md` §4 is written as executed.
++>
++> It is still a **draft quickstart**: the sequence below is verified, the *explanations*
++> are not, because nobody unfamiliar with this repository has walked it end to end.
++>
++> Until 2026-08-12 this banner said the variant had "never been applied to anything" while
++> the section "What a first run actually needed" sat further down the same file. Two
++> readers coming to the repository cold both caught the contradiction, and one said it
++> changed which variant they would pick — which is exactly the damage a stale banner does.
 +
 +Three control planes across two datacentres, three general-purpose agents, a cluster
 +autoscaler, a dedicated CI node, a dedicated egress node, and a redundant NAT router.
@@ -70,7 +80,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -
 -| | |
 -|---|---|
--| Terraform | ≥ 1.10 (`required_version = "~> 1.10"`) |
+-| Terraform | **≥ 1.12** (`required_version = "~> 1.12"`) — CI runs 1.12.0 and 1.15.6 |
 -| Packer | required for the first build only — `init.sh` builds the MicroOS snapshot |
 -| A Hetzner Cloud project | with a read-write API token |
 -| S3-compatible object storage | two buckets: Terraform state and etcd snapshots. **Enable versioning on the state bucket.** |
@@ -131,7 +141,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +have defaults:
  
  ```bash
--# 1. Inputs. Every variable without a default must be set — there are 25 of them, and
+-# 1. Inputs. Every variable without a default must be set — there are 26 of them (27 in
+-#    the ha variant, which adds nat_router_hcloud_token), and
 -#    the identifiers among them deliberately have no defaults so that a fork cannot
 -#    inherit somebody else's domain, bucket or GitHub team.
 -cp secrets.auto.example.tfvars secrets.auto.tfvars
@@ -163,18 +174,28 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -`kube_api_tailnet_address` is the control plane's address on your tailnet. Tailscale
 -assigns it when the node first joins, so on a cluster that does not exist yet **you
 -cannot know it in advance** — and it is required in the API server's certificate.
+-
+-Leave `kube_api_tailnet_address` **empty**, set **`bootstrap_phase = true`**, and run
+-`init.sh`. Then read the assigned address, put it in `secrets.auto.tfvars`, delete the
+-`bootstrap_phase` line, and `terraform apply` again. Full procedure with the reasoning:
+-**`docs/RUNBOOK.md` §2.**
+-
+-`bootstrap_phase` is one flag rather than three separate settings, because pass 1 needs all
+-three to move together and setting some of them fails deep inside the apply with an error
+-that names none of them. **Leaving it `true` is a real exposure**: it keeps the Kubernetes
+-API reachable from the public internet, gated only by `firewall_kube_api_source`.
+-
+-> Until 2026-08-12 this paragraph told you to set
+-> `control_plane_lb_enable_public_interface = true` in `main.tf`. There is no such input —
+-> `grep` it in `variables.tf` and you get nothing. Two readers coming to this repository
+-> cold both stopped exactly here.
 +> **Use a different `key` in `backend.hcl` from any other cluster.** Two clusters sharing
 +> a state key will fight over it and destroy each other's resources. The backend is
 +> partial precisely so this is a decision you make rather than inherit.
  
--Set a placeholder inside `100.64.0.0/10`, leave
--`control_plane_lb_enable_public_interface = true` in `main.tf`, run `init.sh`, then read
--the assigned address, put it in `secrets.auto.tfvars`, set the flag to `false`, and
--`terraform apply` again. Full procedure with the reasoning: **`docs/RUNBOOK.md` §2.**
+-Skipping this is why a green-field build fails on the first apply.
 +### Extra step: verify quorum before you trust it
  
--Skipping this is why a green-field build fails on the first apply.
--
 -## Day two
 +Three control planes that never formed a quorum look exactly like three control planes
 +that did, until the first failure. After the build:
@@ -309,7 +330,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +
 +9. `terraform destroy` does not empty the project by itself, and it can hang for twenty
 +   minutes without naming why. Read the orphan and ordering notes in `docs/RUNBOOK.md` §4
-+   before you need them, and run `assert-no-orphans.sh` afterwards.
++   before you need them, and check for orphans afterwards with the `hcloud` loop given
++   there — every resource type must list `0`.
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/firewall_validations.tftest.hcl variants/ha/firewall_validations.tftest.hcl
 --- variants/solo/firewall_validations.tftest.hcl
 +++ variants/ha/firewall_validations.tftest.hcl
@@ -1005,7 +1027,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
 --- variants/solo/secrets.auto.example.tfvars
 +++ variants/ha/secrets.auto.example.tfvars
-@@ -81,6 +81,14 @@
+@@ -98,6 +98,14 @@
  etcd_s3_bucket     = "k3s-etcd-snapshots"
  etcd_s3_region     = "<your-s3-bucket-region>"
  
@@ -1020,7 +1042,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  # Firewall sources. Both are required and neither may be null — null used to be the
  # value shipped here, and it disabled the restriction entirely while still passing the
  # old validation. The values below are a working, safe default: the Kubernetes API is
-@@ -92,6 +100,13 @@
+@@ -109,6 +117,13 @@
  firewall_kube_api_source = ["100.64.0.0/10"]  # Tailscale CGNAT range
  firewall_ssh_source      = ["203.0.113.7/32"] # REPLACE: your egress IP (this is TEST-NET-3, reserved for docs)
  

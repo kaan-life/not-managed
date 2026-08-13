@@ -40,7 +40,7 @@ side-by-side table.
 
 | | |
 |---|---|
-| Terraform | ≥ 1.10 (`required_version = "~> 1.10"`) |
+| Terraform | **≥ 1.12** (`required_version = "~> 1.12"`) — CI runs 1.12.0 and 1.15.6 |
 | Packer | required for the first build only — `init.sh` builds the MicroOS snapshot |
 | A Hetzner Cloud project | with a read-write API token |
 | S3-compatible object storage | two buckets: Terraform state and etcd snapshots. **Enable versioning on the state bucket.** |
@@ -53,7 +53,8 @@ side-by-side table.
 ## Build
 
 ```bash
-# 1. Inputs. Every variable without a default must be set — there are 25 of them, and
+# 1. Inputs. Every variable without a default must be set — there are 26 of them (27 in
+#    the ha variant, which adds nat_router_hcloud_token), and
 #    the identifiers among them deliberately have no defaults so that a fork cannot
 #    inherit somebody else's domain, bucket or GitHub team.
 cp secrets.auto.example.tfvars secrets.auto.tfvars
@@ -84,10 +85,20 @@ bash init.sh
 assigns it when the node first joins, so on a cluster that does not exist yet **you
 cannot know it in advance** — and it is required in the API server's certificate.
 
-Set a placeholder inside `100.64.0.0/10`, leave
-`control_plane_lb_enable_public_interface = true` in `main.tf`, run `init.sh`, then read
-the assigned address, put it in `secrets.auto.tfvars`, set the flag to `false`, and
-`terraform apply` again. Full procedure with the reasoning: **`docs/RUNBOOK.md` §2.**
+Leave `kube_api_tailnet_address` **empty**, set **`bootstrap_phase = true`**, and run
+`init.sh`. Then read the assigned address, put it in `secrets.auto.tfvars`, delete the
+`bootstrap_phase` line, and `terraform apply` again. Full procedure with the reasoning:
+**`docs/RUNBOOK.md` §2.**
+
+`bootstrap_phase` is one flag rather than three separate settings, because pass 1 needs all
+three to move together and setting some of them fails deep inside the apply with an error
+that names none of them. **Leaving it `true` is a real exposure**: it keeps the Kubernetes
+API reachable from the public internet, gated only by `firewall_kube_api_source`.
+
+> Until 2026-08-12 this paragraph told you to set
+> `control_plane_lb_enable_public_interface = true` in `main.tf`. There is no such input —
+> `grep` it in `variables.tf` and you get nothing. Two readers coming to this repository
+> cold both stopped exactly here.
 
 Skipping this is why a green-field build fails on the first apply.
 

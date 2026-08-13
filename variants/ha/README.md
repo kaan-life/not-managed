@@ -1,15 +1,25 @@
 # Variant: ha
 
-> **Draft quickstart, and a stronger warning than the one on `solo`.** This variant has
-> **never been applied to anything.** It was authored in this repository, derived from the
-> variant that runs a real workload, and at the time of writing it has been verified only
-> by static means: `terraform validate`, and a plan that resolves the full 46-resource
-> graph against an empty state.
+> **This variant has been booted, and the two failure modes it exists to survive have been
+> executed rather than asserted.** On a throwaway project, from a clean checkout of this
+> tree:
 >
-> It has **not** been booted. The control-plane kill and the etcd restore that this design
-> exists to survive have **not** been executed. Until they have, treat every availability
-> claim here as a design intention rather than a measurement — and read the `solo` variant
-> if you need something whose failure modes are known.
+> - **control-plane kill** (2026-08-11) — `poweroff`, not a graceful shutdown, on one of
+>   the three. During the outage: 10/10 API probes succeeded and an etcd *write* went
+>   through on the surviving two members. The write is the evidence; a readable API only
+>   proves the load balancer is doing its job.
+> - **etcd restore** (2026-08-12, twice) — full `--cluster-reset`, checked with a marker
+>   that had to survive and a second marker that had to disappear. The second run deleted
+>   the node's local snapshot first and restored from the bucket alone. Measured RTO for
+>   the mechanical part: under five minutes. `docs/RUNBOOK.md` §4 is written as executed.
+>
+> It is still a **draft quickstart**: the sequence below is verified, the *explanations*
+> are not, because nobody unfamiliar with this repository has walked it end to end.
+>
+> Until 2026-08-12 this banner said the variant had "never been applied to anything" while
+> the section "What a first run actually needed" sat further down the same file. Two
+> readers coming to the repository cold both caught the contradiction, and one said it
+> changed which variant they would pick — which is exactly the damage a stale banner does.
 
 Three control planes across two datacentres, three general-purpose agents, a cluster
 autoscaler, a dedicated CI node, a dedicated egress node, and a redundant NAT router.
@@ -171,4 +181,5 @@ defect you should have to rediscover.
 
 9. `terraform destroy` does not empty the project by itself, and it can hang for twenty
    minutes without naming why. Read the orphan and ordering notes in `docs/RUNBOOK.md` §4
-   before you need them, and run `assert-no-orphans.sh` afterwards.
+   before you need them, and check for orphans afterwards with the `hcloud` loop given
+   there — every resource type must list `0`.
