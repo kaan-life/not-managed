@@ -104,6 +104,63 @@ SECURITY.md           private reporting channel, threat model, what is out of sc
 .github/              CI and Dependabot
 ```
 
+## The companion GitOps repository
+
+This repository builds the cluster. It does not describe what runs on it — that is
+[`not-managed-gitops`](../not-managed-gitops), and the two are published as one thing.
+Neither is much use alone: this one without the companion boots an empty cluster; the
+companion without this one is a pile of manifests with nothing to apply them.
+
+<!-- Relative link on purpose: GitHub resolves ../name against this repository's owner, so
+     the cross-link works without naming the hosting account in the file. -->
+
+You do not have to use it. `SKIP_TEKTON_BOOTSTRAP=1 bash init.sh` builds a cluster with no
+Tekton and no ArgoCD Applications, which is a legitimate choice. If you do use it, the
+companion's README lists the five things a fork must supply before anything reconciles.
+
+**What this repository requires of a GitOps repository**, whether it is the companion or
+your own — three clauses, and only the first is obvious:
+
+1. **A manifest at `tekton/crds/crds-app.yaml`.** `init.sh` applies exactly this one file
+   during bootstrap, and nothing else from the GitOps side. Override the path with
+   `GITOPS_CRD_PATH` if your layout differs.
+2. **A reachable `repoURL` *inside* that manifest.** `init.sh` applies the file unchanged,
+   so the URL it carries is the URL ArgoCD will use — deriving the clone URL from
+   `github_org_url` + `github_repo_name` does not rewrite it. Leave the companion's
+   placeholder in place and bootstrap waits `GITOPS_CRD_TIMEOUT` (600s) and then fails.
+3. **One top-level directory per namespace.** The root ApplicationSet is generated with
+   `path: {{environment}}`, so every name in `utility_namespaces + app_namespaces` must
+   match a directory in the GitOps repository. A namespace with no directory produces an
+   Application that reports `Healthy` — an Application with zero resources trivially is —
+   while `sync` sits at `Unknown` with `app path does not exist`.
+
+### The placeholder in the companion must stay a placeholder
+
+The companion ships `repoURL: https://github.com/example-org/gitops`, which does not exist
+and returns 404. **Do not "fix" it to point at the real repository, in the companion or in
+any fork you publish.** A working URL there means anyone who forgets to substitute it
+reconciles their cluster out of somebody else's repository — with no error, no symptom and
+no way to notice. A 404 fails loudly on the first sync, and loud is the entire design.
+
+Substitute it in *your* fork, in both files that carry it (`root.yaml` and
+`tekton/crds/crds-app.yaml`), and leave the published one alone.
+
+### Pinning the pair
+
+The two repositories carry **the same tag**. `not-managed v1.0.0` goes with
+`not-managed-gitops v1.0.0` — one version number, no translation table, so a mismatch is
+visible rather than inferred.
+
+> **`GITOPS_REF` pins less than it looks like it does.** It selects which revision of the
+> companion the bootstrap manifest is *read from*. It does **not** pin what ArgoCD
+> reconciles afterwards: that is `targetRevision`, and it is `main` in three places — the
+> companion's `root.yaml`, its `tekton/crds/crds-app.yaml`, and the ApplicationSet this
+> repository generates in `scripts/apply-argocd-appset.py`. A fork that sets only
+> `GITOPS_REF` has pinned one file out of thirty-five build directories, and every push to
+> the companion's `main` still lands in the cluster.
+>
+> Pinning the pair properly means changing `targetRevision` in all three places as well.
+
 ## Status
 
 This tree is being prepared for publication and is **not finished**.

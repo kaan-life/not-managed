@@ -72,7 +72,10 @@ round-trip time before choosing differently**, and raise the `etcd-arg` values i
 
 ## Prerequisites and build
 
-Identical to `variants/solo` — same tools, same accounts, same two-pass build for the
+Identical to `variants/solo` — including the companion GitOps repository, whose three
+requirements and placeholder rule are in
+[the root README](../../README.md#the-companion-gitops-repository). Same tools, same
+accounts, same two-pass build for the
 tailnet address (`docs/RUNBOOK.md` §2). Only the two location inputs are extra, and both
 have defaults:
 

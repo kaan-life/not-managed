@@ -13,7 +13,7 @@ Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripp
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
 --- variants/solo/README.md
 +++ variants/ha/README.md
-@@ -1,153 +1,185 @@
+@@ -1,153 +1,188 @@
 -# Variant: solo
 +# Variant: ha
  
@@ -86,7 +86,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -| S3-compatible object storage | two buckets: Terraform state and etcd snapshots. **Enable versioning on the state bucket.** |
 -| A Tailscale tailnet | plus an auth key; the kube-API is served only there |
 -| A GitHub organisation | with an App (for ArgoCD repo access) and an OAuth App (for SSO) |
--| A companion GitOps repository | see `docs/adr/0008` — or set `SKIP_TEKTON_BOOTSTRAP=1` |
+-| A companion GitOps repository | **three things it must provide**, and the placeholder rule — see [the root README](../../README.md#the-companion-gitops-repository). Rationale in `docs/adr/0008`. Or skip it entirely with `SKIP_TEKTON_BOOTSTRAP=1` |
 -| A domain | with DNS you control, for the ArgoCD ingress |
 -| `kubectl`, `hcloud`, `python3`, `git` | on the machine running Terraform |
 -
@@ -136,7 +136,10 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +
 +## Prerequisites and build
 +
-+Identical to `variants/solo` — same tools, same accounts, same two-pass build for the
++Identical to `variants/solo` — including the companion GitOps repository, whose three
++requirements and placeholder rule are in
++[the root README](../../README.md#the-companion-gitops-repository). Same tools, same
++accounts, same two-pass build for the
 +tailnet address (`docs/RUNBOOK.md` §2). Only the two location inputs are extra, and both
 +have defaults:
  

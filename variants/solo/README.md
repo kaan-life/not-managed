@@ -46,7 +46,7 @@ side-by-side table.
 | S3-compatible object storage | two buckets: Terraform state and etcd snapshots. **Enable versioning on the state bucket.** |
 | A Tailscale tailnet | plus an auth key; the kube-API is served only there |
 | A GitHub organisation | with an App (for ArgoCD repo access) and an OAuth App (for SSO) |
-| A companion GitOps repository | see `docs/adr/0008` — or set `SKIP_TEKTON_BOOTSTRAP=1` |
+| A companion GitOps repository | **three things it must provide**, and the placeholder rule — see [the root README](../../README.md#the-companion-gitops-repository). Rationale in `docs/adr/0008`. Or skip it entirely with `SKIP_TEKTON_BOOTSTRAP=1` |
 | A domain | with DNS you control, for the ArgoCD ingress |
 | `kubectl`, `hcloud`, `python3`, `git` | on the machine running Terraform |
 
