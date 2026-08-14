@@ -211,6 +211,23 @@ affinity:
   # v2 name: it is also a key in local.kustomization_trigger_fingerprint, and that
   # fingerprint is a sha1 over the JSON, key names included. Renaming the key would change
   # the hash and re-run the kured/storageclass patch hook for no reason at all.
+  # A CHANNEL NAME, BUT NOT A FLOATING ONE — and that changed under us, so it is worth
+  # stating precisely rather than assuming either way.
+  #
+  # Under kube-hetzner 2.19.2 a channel meant "whatever k3s currently publishes as latest
+  # in this minor", which is genuinely unpinned: two people building a week apart get
+  # different patch versions. 3.1.0 replaced that with a release manifest reviewed against
+  # the module version, so `k3s_channel = "v1.33"` now resolves to a fixed
+  # `v1.33.13+k3s2` (module locals.tf, k3s_channel_release_manifest). The bootstrap is
+  # therefore deterministic for a given module pin, and this line is NOT the odd one out
+  # among the exact versions above it.
+  #
+  # What can still move is afterwards: upstream's own description notes that
+  # System-Upgrade-Controller plans may keep following the live channel, so the version a
+  # cluster RUNS can drift from the version it was BUILT with. That is a property of the
+  # upgrade path, not of this line.
+  #
+  # Set `k3s_version` (e.g. "v1.29.6+k3s2") to pin exactly and supersede the channel.
   initial_k3s_channel = "v1.33"
 
   # Kubernetes API audit logging. Nothing recorded who called the API before this: a

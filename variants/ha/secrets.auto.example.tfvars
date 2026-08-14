@@ -136,6 +136,21 @@ nat_router_hcloud_token = "<a second 64-character Hetzner API token>"
 
 tailscale_auth_key = "<your-tailscale-auth-key>"
 
+# Private subnets this cluster's nodes advertise as Tailscale subnet routes. Leave it out
+# and you get ["10.0.0.0/16"], which is correct for ONE cluster on a tailnet.
+#
+# IT HAS TO DIFFER PER CLUSTER, and the default cannot do that for you. Every node runs the
+# advertisement — it is in preinstall_exec, not something only the NAT router does — so two
+# clusters built from this repository onto the SAME tailnet advertise the same prefix and
+# Tailscale elects one of them primary for it. The second cluster to join is one election
+# away from owning the first one's private-network route, and nothing logs that.
+#
+# Give a second cluster its own range (set network_ipv4_cidr to match), or set this to []
+# and reach it by node address only. Listed here because the warning lives in variables.tf,
+# which you do not have to open to build — so until 2026-08-14 a reader who filled in only
+# this file never saw it.
+# tailscale_advertise_routes = ["10.0.0.0/16"]
+
 # The control-plane node's tailnet address. Serves double duty: certificate SAN and the
 # address kubeconfig dials. Tailscale assigns it when the control plane first joins, so
 # on a NEW cluster you cannot know it up front. Build in two passes — see docs/RUNBOOK.md §2.

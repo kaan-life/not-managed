@@ -497,10 +497,12 @@ variable "tailscale_advertise_routes" {
     and Tailscale picks one of them as the primary router for it. Measured on 2026-08-11
     while green-field testing:
 
-      tailscale status --json  ->  peer k3s-agent-small-pkb PrimaryRoutes ['10.0.0.0/16']
+      tailscale status --json  ->  peer <an agent node> PrimaryRoutes ['10.0.0.0/16']
 
-    Several production nodes advertise that prefix and one had been elected primary, which
-    only happens where routes for the tag are auto-approved. A second cluster joining that
+    Several nodes of the cluster this configuration was derived from advertise that prefix
+    and one had been elected primary, which only happens where routes for the tag are
+    auto-approved. (The node name is elided: it is a real machine on a real tailnet, and a
+    naming convention is free reconnaissance for anyone who later gets a key.) A second cluster joining that
     tailnet is therefore one election away from taking over the FIRST cluster's subnet
     route — traffic for the wrong cluster's private network, with nothing logged anywhere.
 

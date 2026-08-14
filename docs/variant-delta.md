@@ -500,8 +500,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +  # name: it is also a key in local.kustomization_trigger_fingerprint, and that
    # fingerprint is a sha1 over the JSON, key names included. Renaming the key would change
    # the hash and re-run the kured/storageclass patch hook for no reason at all.
-   initial_k3s_channel = "v1.33"
-@@ -267,13 +298,24 @@
+   # A CHANNEL NAME, BUT NOT A FLOATING ONE — and that changed under us, so it is worth
+@@ -284,13 +315,24 @@
        - level: Metadata
    EOT
  
@@ -528,7 +528,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        os          = local.node_os
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
-@@ -349,38 +391,30 @@
+@@ -366,38 +408,30 @@
    #     which provider 1.60.1 still REQUIRES." Moot rather than fixed: 3.1.0 declares
    #     hcloud >= 1.62.0, so 1.60.1 cannot be installed against it at all —
    #     `terraform init` exits 1 with "no available releases match the given constraints
@@ -585,7 +585,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #   count = contains(var.enabled_architectures, "arm") && local.os_arch_requirements.microos.arm && ...
    # Naming x86 here closes the first clause explicitly rather than relying on the second.
    enabled_architectures = ["x86"]
-@@ -410,14 +444,12 @@
+@@ -427,14 +461,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -604,7 +604,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -480,11 +512,35 @@
+@@ -497,11 +529,35 @@
      }
    }
  
@@ -642,7 +642,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -495,12 +551,12 @@
+@@ -512,12 +568,12 @@
        enable_public_ipv6 = false
      },
      {
@@ -658,7 +658,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -508,12 +564,15 @@
+@@ -525,12 +581,15 @@
        enable_public_ipv6 = false
      },
      {
@@ -677,7 +677,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -528,7 +587,7 @@
+@@ -545,7 +604,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -686,7 +686,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -559,7 +618,7 @@
+@@ -576,7 +635,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -695,7 +695,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -579,9 +638,35 @@
+@@ -596,9 +655,35 @@
        enable_public_ipv6 = false
      },
      {
@@ -732,7 +732,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -602,7 +687,7 @@
+@@ -619,7 +704,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -741,7 +741,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -631,7 +716,7 @@
+@@ -648,7 +733,7 @@
        # inserting a pool earlier re-indexes (and recreates) the egress node.
        name        = "agent-ci",
        server_type = "cx33",
@@ -750,7 +750,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -657,15 +742,36 @@
+@@ -674,15 +759,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -790,7 +790,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -718,31 +824,28 @@
+@@ -735,31 +841,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -844,7 +844,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -800,6 +903,25 @@
+@@ -817,6 +920,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -870,7 +870,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -807,13 +929,33 @@
+@@ -824,13 +946,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -909,7 +909,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -842,7 +984,6 @@
+@@ -859,7 +1001,6 @@
      # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
      # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
      # every node runs this line, so two clusters on one tailnet fight over the same prefix.
@@ -917,7 +917,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
    ]
  
-@@ -874,15 +1015,11 @@
+@@ -891,15 +1032,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -938,7 +938,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -890,26 +1027,14 @@
+@@ -907,26 +1044,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -970,7 +970,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -935,18 +1060,12 @@
+@@ -952,18 +1077,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -995,7 +995,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -956,14 +1075,9 @@
+@@ -973,14 +1092,9 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
@@ -1052,8 +1052,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +
  tailscale_auth_key = "<your-tailscale-auth-key>"
  
- # The control-plane node's tailnet address. Serves double duty: certificate SAN and the
-@@ -134,8 +148,9 @@
+ # Private subnets this cluster's nodes advertise as Tailscale subnet routes. Leave it out
+@@ -149,8 +163,9 @@
  
  # Pass 1 of a green-field build: true for the FIRST apply of a cluster that does not exist
  # yet, false (or absent) for every apply after it. One flag rather than three settings that
