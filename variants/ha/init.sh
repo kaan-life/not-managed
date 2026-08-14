@@ -13,15 +13,43 @@ for arg in "$@"; do
   esac
 done
 
-# Extract hcloud_token from secrets.auto.tfvars
-HCLOUD_TOKEN=$(sed -n 's/^[[:space:]]*hcloud_token[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars)
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+
+# ── Which cluster are you about to modify? ───────────────────────────────────
+# TWO files decide that: backend.hcl says which STATE, secrets.auto.tfvars says which
+# CREDENTIALS. Both are resolved from the SCRIPT's directory, never from $PWD, and they
+# have to agree — resolving them by different rules is how you end up applying one
+# cluster's configuration against another cluster's state.
+#
+# Until 2026-08-14 only backend.hcl was resolved this way. The comment below it already
+# explained the hazard ("invoking this script by a relative path from a neighbouring
+# checkout would otherwise pick up that checkout's backend.hcl") — and the file holding
+# the CREDENTIALS was still read from $PWD, six times. So:
+#
+#   cd ~/prod-checkout && bash ~/test-checkout/variants/solo/init.sh
+#
+# took the state from the test checkout and the token from production, and the reverse
+# took production's state with a test token — followed by four `terraform apply
+# -auto-approve` with no diff shown to anybody. destroy.sh already did this correctly
+# (GUARD_DIR); init.sh is the one that did not.
+#
+# Override deliberately with TFVARS=/path/to/secrets.auto.tfvars, the same shape as
+# TF_BACKEND_CONFIG below. An override you typed is a decision; a $PWD you forgot is not.
+TFVARS="${TFVARS:-${SCRIPT_DIR}/secrets.auto.tfvars}"
+if [ ! -f "${TFVARS}" ]; then
+  echo "Error: ${TFVARS} not found." >&2
+  echo "       Copy secrets.auto.example.tfvars to secrets.auto.tfvars and fill it in," >&2
+  echo "       or point elsewhere with TFVARS=/path/to/secrets.auto.tfvars." >&2
+  exit 1
+fi
+
+# Extract hcloud_token
+HCLOUD_TOKEN=$(sed -n 's/^[[:space:]]*hcloud_token[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${TFVARS}")
 
 # Extract Terraform state backend credentials (exported as standard AWS env vars
 # so the S3 backend picks them up — backend blocks cannot reference var.*)
-TF_STATE_ACCESS_KEY=$(sed -n 's/^[[:space:]]*tf_state_access_key[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars)
-TF_STATE_SECRET_KEY=$(sed -n 's/^[[:space:]]*tf_state_secret_key[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars)
-
-SCRIPT_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+TF_STATE_ACCESS_KEY=$(sed -n 's/^[[:space:]]*tf_state_access_key[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${TFVARS}")
+TF_STATE_SECRET_KEY=$(sed -n 's/^[[:space:]]*tf_state_secret_key[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${TFVARS}")
 
 # ── Remote state backend ─────────────────────────────────────────────────────
 # providers.tf declares a PARTIAL backend: it names no bucket. Which state store to
@@ -57,8 +85,8 @@ fi
 #   GITOPS_REF=<ref>          branch or tag to clone (default: main; pin it in a fork)
 #   GITOPS_CRD_PATH=<path>    manifest to apply, relative to the GitOps repo root
 #   GITOPS_CRD_TIMEOUT=<sec>  how long to wait for the CRDs (default: 600)
-GITHUB_ORG_URL=$(sed -n 's/^[[:space:]]*github_org_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars)
-GITOPS_REPO_NAME=$(sed -n 's/^[[:space:]]*github_repo_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars)
+GITHUB_ORG_URL=$(sed -n 's/^[[:space:]]*github_org_url[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${TFVARS}")
+GITOPS_REPO_NAME=$(sed -n 's/^[[:space:]]*github_repo_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${TFVARS}")
 GITOPS_REPO_URL="${GITOPS_REPO_URL:-${GITHUB_ORG_URL%/}/${GITOPS_REPO_NAME}.git}"
 GITOPS_REF="${GITOPS_REF:-main}"
 GITOPS_CRD_PATH="${GITOPS_CRD_PATH:-tekton/crds/crds-app.yaml}"
@@ -134,9 +162,9 @@ if [ "$APPLY_ONLY" = true ]; then
   echo "==> Day-2 apply: skipping Packer build and phased apply."
 
   # The module names this file after the cluster, not after "k3s" — see the note in
-  # github.tf. Hardcoding "k3s_kubeconfig.yaml" worked only for a cluster called k3s; a
-  # fork with any other cluster_name got a file it never looked at.
-  KUBECONFIG_NAME="$(sed -n 's/^[[:space:]]*cluster_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars | head -1)_kubeconfig.yaml"
+  # github.tf. Hardcoding "k3s_kubeconfig.yaml" worked only because THIS cluster happens
+  # to be called k3s; a fork with any other cluster_name got a file it never looked at.
+  KUBECONFIG_NAME="$(sed -n 's/^[[:space:]]*cluster_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${TFVARS}" | head -1)_kubeconfig.yaml"
   if [ -f "${KUBECONFIG_NAME}" ]; then
     echo "==> Using existing ${KUBECONFIG_NAME}"
     export KUBECONFIG="${KUBECONFIG_NAME}"

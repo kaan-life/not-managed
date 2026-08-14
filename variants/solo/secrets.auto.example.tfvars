@@ -65,7 +65,18 @@ argocd_domain = "gitops.example.com"
 
 # GitHub team (inside github_org_url) whose members get ArgoCD role:admin. Everyone else
 # who can authenticate gets role:readonly.
-argocd_admin_team = "k8s-admins"
+#
+# A PLACEHOLDER, like every other value in this file. Until 2026-08-14 this line carried the
+# maintainer's REAL team name while its neighbours were all placeholders — so a reader had
+# every reason to think it was one too, and publishing it announced which GitHub accounts
+# are worth phishing to reach a production ArgoCD.
+#
+# The first replacement kept the real team name as a substring, wrapped in "your-...-team",
+# and the gate rejected it on the spot. A placeholder that embeds the string you are
+# removing is not a placeholder — and the failed attempt is described here rather than
+# quoted, for the same reason docs/RUNBOOK.md describes the PKCS#1 header instead of
+# reproducing it.
+argocd_admin_team = "your-admins-team"
 
 # SSH PUBLIC key installed on every node. The matching PRIVATE key is never given to
 # Terraform (it would land in the state); load it into an ssh-agent before applying.
@@ -123,10 +134,16 @@ kube_api_tailnet_address = ""
 
 # Pass 1 of a green-field build: true for the FIRST apply of a cluster that does not exist
 # yet, false (or absent) for every apply after it. One flag rather than three settings that
-# have to move together. Leaving it true keeps the Kubernetes API reachable from the public
-# internet, gated only by firewall_kube_api_source — so delete this line once you are past
-# pass 2 rather than leaving it lying around set to false.
-bootstrap_phase = true
+# have to move together.
+#
+# COMMENTED OUT, and shipped that way on purpose. The variable's own default is false
+# "so that the safe state is the one you get by not thinking about it", and until
+# 2026-08-14 this file shipped it as `true` — which inverts exactly that. Leaving it true
+# keeps the Kubernetes API reachable from the public internet, gated only by
+# firewall_kube_api_source.
+#
+# Uncomment it for the first apply, then comment it out again. See docs/RUNBOOK.md §2.
+# bootstrap_phase = true
 
 # ─── Terraform Remote State Backend: credentials only ────────────────────────
 # WHICH state store to use is not set here. providers.tf declares a partial backend and

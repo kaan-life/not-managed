@@ -380,20 +380,6 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        KUBECONFIG                 = "${abspath(path.root)}/${var.cluster_name}_kubeconfig.yaml"
        GITHUB_APP_PEM_PATH        = "${abspath(path.root)}/${var.github_app_private_key_path}"
        GITHUB_APP_ID              = var.github_app_id
-diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/init.sh variants/ha/init.sh
---- variants/solo/init.sh
-+++ variants/ha/init.sh
-@@ -134,8 +134,8 @@
-   echo "==> Day-2 apply: skipping Packer build and phased apply."
- 
-   # The module names this file after the cluster, not after "k3s" — see the note in
--  # github.tf. Hardcoding "k3s_kubeconfig.yaml" worked only because THIS cluster happens
--  # to be called k3s; a fork with any other cluster_name got a file it never looked at.
-+  # github.tf. Hardcoding "k3s_kubeconfig.yaml" worked only for a cluster called k3s; a
-+  # fork with any other cluster_name got a file it never looked at.
-   KUBECONFIG_NAME="$(sed -n 's/^[[:space:]]*cluster_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' secrets.auto.tfvars | head -1)_kubeconfig.yaml"
-   if [ -f "${KUBECONFIG_NAME}" ]; then
-     echo "==> Using existing ${KUBECONFIG_NAME}"
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/main.tf variants/ha/main.tf
 --- variants/solo/main.tf
 +++ variants/ha/main.tf
@@ -1027,7 +1013,15 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
 --- variants/solo/secrets.auto.example.tfvars
 +++ variants/ha/secrets.auto.example.tfvars
-@@ -98,6 +98,14 @@
+@@ -65,7 +65,6 @@
+ 
+ # GitHub team (inside github_org_url) whose members get ArgoCD role:admin. Everyone else
+ # who can authenticate gets role:readonly.
+-#
+ # A PLACEHOLDER, like every other value in this file. Until 2026-08-14 this line carried the
+ # maintainer's REAL team name while its neighbours were all placeholders — so a reader had
+ # every reason to think it was one too, and publishing it announced which GitHub accounts
+@@ -109,6 +108,14 @@
  etcd_s3_bucket     = "k3s-etcd-snapshots"
  etcd_s3_region     = "<your-s3-bucket-region>"
  
@@ -1042,7 +1036,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  # Firewall sources. Both are required and neither may be null — null used to be the
  # value shipped here, and it disabled the restriction entirely while still passing the
  # old validation. The values below are a working, safe default: the Kubernetes API is
-@@ -109,6 +117,13 @@
+@@ -120,6 +127,13 @@
  firewall_kube_api_source = ["100.64.0.0/10"]  # Tailscale CGNAT range
  firewall_ssh_source      = ["203.0.113.7/32"] # REPLACE: your egress IP (this is TEST-NET-3, reserved for docs)
  
@@ -1056,6 +1050,18 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  tailscale_auth_key = "<your-tailscale-auth-key>"
  
  # The control-plane node's tailnet address. Serves double duty: certificate SAN and the
+@@ -134,8 +148,9 @@
+ 
+ # Pass 1 of a green-field build: true for the FIRST apply of a cluster that does not exist
+ # yet, false (or absent) for every apply after it. One flag rather than three settings that
+-# have to move together.
+-#
++# have to move together. Leaving it true keeps the Kubernetes API reachable from the public
++# internet, gated only by firewall_kube_api_source — so delete this line once you are past
++# pass 2 rather than leaving it lying around set to false.
+ # COMMENTED OUT, and shipped that way on purpose. The variable's own default is false
+ # "so that the safe state is the one you get by not thinking about it", and until
+ # 2026-08-14 this file shipped it as `true` — which inverts exactly that. Leaving it true
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/variables.tf variants/ha/variables.tf
 --- variants/solo/variables.tf
 +++ variants/ha/variables.tf
