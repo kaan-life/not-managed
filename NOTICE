@@ -8,22 +8,41 @@ no attribution obligation — is in THIRD_PARTY.md.
 ================================================================================
 kube-hetzner / terraform-hcloud-kube-hetzner
 https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner
-Pinned version: v2.19.2
+Module consumed at: v3.1.0        (variants/*/main.tf, `version = "3.1.0"`)
+Packer template derived from: v2.19.2
 License: MIT
 ================================================================================
+
+TWO VERSION NUMBERS, DELIBERATELY, because they answer two different questions and
+this notice used to give only one. The Terraform module this configuration CALLS is
+pinned at v3.1.0. The Packer template this repository VENDORS was derived from
+v2.19.2 and has not been re-derived since. Attribution follows the file, not the
+module pin — so collapsing these into a single "pinned version" line, as this notice
+did until 2026-08-14, attributed the vendored file to a version it does not come from.
 
 Two files in each variant directory are derived from this project:
 
   packer/hcloud-microos-snapshots.pkr.hcl
-      Derived from the upstream packer-template of the same name. It differs from
-      upstream v2.19.2 in 18 lines out of roughly 210; the difference is SHA256
-      verification of the downloaded openSUSE MicroOS images. It carries an MIT
-      SPDX identifier for that reason.
+      Derived from the upstream packer-template of the same name, at v2.19.2.
+      Re-measured on 2026-08-14: 94 of our 102 substantive lines are shared with
+      upstream v2.19.2 (92%), against 68 of 102 (67%) with v3.1.0 — upstream grew
+      that template from 208 to 641 lines in the 3.x line, largely to add openSUSE
+      Leap Micro alongside MicroOS, which this repository does not build. The
+      derivation is therefore from v2.19.2 and saying otherwise would be wrong.
+
+      Our difference from v2.19.2 is SHA256 verification of the downloaded openSUSE
+      MicroOS images. It carries an MIT SPDX identifier for that reason.
 
   main.tf
-      Configuration-level derivation from upstream's kube.tf.example: 30 of 249
-      substantive unique lines are shared. Attributed out of caution rather than
-      obligation.
+      Configuration-level derivation from upstream's kube.tf.example. Re-measured
+      on 2026-08-14: 43 of 252 substantive unique lines shared in variants/solo,
+      39 of 258 in variants/ha — roughly 17% and 15%. The earlier figure in this
+      file (30 of 249) predates both variants and the 3.1.0 move.
+
+      The shared count is almost identical against v2.19.2 (43) and v3.1.0 (44),
+      which is itself the useful fact: what is shared are configuration attribute
+      names that both files must use, not authored prose. Attributed out of caution
+      rather than obligation.
 
 Upstream's LICENSE file contains the MIT permission text with NO copyright holder line.
 There is therefore no copyright notice to retain, and none has been invented. Attribution
