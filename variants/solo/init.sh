@@ -111,15 +111,27 @@ trap cleanup EXIT
 # would leak a full checkout of a possibly-private repository into /tmp.
 GITOPS_DIR=""
 resolve_gitops_checkout() {
-  local sibling
+  local candidate
   if [ -n "${GITOPS_LOCAL_PATH:-}" ]; then
     [ -d "${GITOPS_LOCAL_PATH}" ] || { echo "Error: GITOPS_LOCAL_PATH=${GITOPS_LOCAL_PATH} is not a directory" >&2; return 1; }
-    GITOPS_DIR="${GITOPS_LOCAL_PATH}"; return 0
+    GITOPS_DIR="${GITOPS_LOCAL_PATH}"
+    echo "==> Using GitOps checkout at ${GITOPS_DIR} (GITOPS_LOCAL_PATH)"
+    return 0
   fi
-  sibling="${SCRIPT_DIR}/../${GITOPS_REPO_NAME}"
-  if [ -d "${sibling}/.git" ]; then
-    GITOPS_DIR="${sibling}"; return 0
-  fi
+  # Two candidates, because this script has lived at two depths. `../` is the sibling when
+  # init.sh sits at a repository root; `../../../` is the sibling when it sits in
+  # variants/<name>/, which is where it is in THIS repository. Probing only the first was a
+  # SILENT failure rather than a loud one: the clone below then supplied whatever was on
+  # the remote, so a local checkout you meant to test was ignored without a word. For any
+  # other layout, set GITOPS_LOCAL_PATH.
+  for candidate in "${SCRIPT_DIR}/../${GITOPS_REPO_NAME}" \
+                   "${SCRIPT_DIR}/../../../${GITOPS_REPO_NAME}"; do
+    if [ -d "${candidate}/.git" ]; then
+      GITOPS_DIR="${candidate}"
+      echo "==> Using local GitOps checkout at ${GITOPS_DIR}"
+      return 0
+    fi
+  done
   [ -n "${GITHUB_ORG_URL}" ] && [ -n "${GITOPS_REPO_NAME}" ] || {
     echo "Error: cannot derive the GitOps repository URL — github_org_url and github_repo_name" >&2
     echo "       must be set in secrets.auto.tfvars, or set GITOPS_REPO_URL explicitly." >&2

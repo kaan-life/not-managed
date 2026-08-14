@@ -1024,7 +1024,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  # A PLACEHOLDER, like every other value in this file. Until 2026-08-14 this line carried the
  # maintainer's REAL team name while its neighbours were all placeholders — so a reader had
  # every reason to think it was one too, and publishing it announced which GitHub accounts
-@@ -109,6 +108,14 @@
+@@ -118,6 +117,14 @@
  etcd_s3_bucket     = "k3s-etcd-snapshots"
  etcd_s3_region     = "<your-s3-bucket-region>"
  
@@ -1039,7 +1039,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  # Firewall sources. Both are required and neither may be null — null used to be the
  # value shipped here, and it disabled the restriction entirely while still passing the
  # old validation. The values below are a working, safe default: the Kubernetes API is
-@@ -120,6 +127,13 @@
+@@ -129,6 +136,13 @@
  firewall_kube_api_source = ["100.64.0.0/10"]  # Tailscale CGNAT range
  firewall_ssh_source      = ["203.0.113.7/32"] # REPLACE: your egress IP (this is TEST-NET-3, reserved for docs)
  
@@ -1053,7 +1053,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  tailscale_auth_key = "<your-tailscale-auth-key>"
  
  # Private subnets this cluster's nodes advertise as Tailscale subnet routes. Leave it out
-@@ -149,8 +163,9 @@
+@@ -158,8 +172,9 @@
  
  # Pass 1 of a green-field build: true for the FIRST apply of a cluster that does not exist
  # yet, false (or absent) for every apply after it. One flag rather than three settings that

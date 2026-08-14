@@ -99,8 +99,17 @@ extra_firewall_rules = [
   # },
 ]
 
-utility_namespaces = ["your-tooling", "your-tekton"]
-app_namespaces     = ["your-dev", "your-prod"]
+# These are the only values in this file WITHOUT a `your-` prefix, and that is deliberate:
+# they are not free-form names. Each one must EQUAL a top-level directory in the companion
+# GitOps repository, because the root ApplicationSet is generated with
+# `path: {{environment}}`. The three below are the directories the published companion
+# actually ships, so this file works against it unedited.
+#
+# Rename them only together with those directories. A namespace with no matching directory
+# produces an Application that reports `Healthy` — one with zero resources trivially is —
+# while sync sits at `Unknown` with `app path does not exist`.
+utility_namespaces = ["tooling", "tekton"]
+app_namespaces     = ["prod"]
 
 etcd_s3_endpoint   = "xxxx.r2.cloudflarestorage.com"
 etcd_s3_access_key = "<access-key>"

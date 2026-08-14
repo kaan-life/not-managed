@@ -132,7 +132,22 @@ your own — three clauses, and only the first is obvious:
    `path: {{environment}}`, so every name in `utility_namespaces + app_namespaces` must
    match a directory in the GitOps repository. A namespace with no directory produces an
    Application that reports `Healthy` — an Application with zero resources trivially is —
-   while `sync` sits at `Unknown` with `app path does not exist`.
+   while `sync` sits at `Unknown` with `app path does not exist`. The example tfvars in
+   both variants ship `["tooling", "tekton"]` and `["prod"]` — the directories the
+   companion actually has — so the pair works unedited. They are the only values in that
+   file without a `your-` prefix, because they are not free-form names.
+
+### Where `init.sh` looks for the companion
+
+Before cloning anything, `init.sh` looks for a local checkout next to this repository:
+`../<github_repo_name>`, and — because this file lives in `variants/<name>/` —
+`../../../<github_repo_name>`. It prints which one it used. Set **`GITOPS_LOCAL_PATH`** to
+point it at any other location, and `SKIP_TEKTON_BOOTSTRAP=1` to skip the whole step.
+
+> Until v1.0.1 it probed only the first of those two paths, which from `variants/solo/`
+> resolves to `variants/not-managed-gitops` and can therefore never exist. A local checkout
+> was ignored and the remote cloned in its place, with nothing printed to say so — which
+> meant testing an edit to the companion silently tested `main` instead.
 
 ### The placeholder in the companion must stay a placeholder
 
