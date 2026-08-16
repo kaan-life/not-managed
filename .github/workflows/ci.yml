@@ -10,12 +10,29 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Weekly, because module-pin and vendored-manifest guard UPSTREAM drift: the registry
+  # re-mapping a version string or k3s moving the local-path manifest happens on
+  # upstream's clock, not this repository's. Guards that only fire on commits go quiet
+  # exactly when the repository does — and a quiet repository is this one's steady state.
+  #
+  # GITHUB DISABLES THIS TRIGGER ON INACTIVITY, and that can hit this repository:
+  # docs.github.com ("Disabling and enabling a workflow", read 2026-08-16) says scheduled
+  # workflows in public repositories are disabled automatically after 60 days without
+  # repository activity. Re-enable with: gh workflow enable CI  (or the "Enable workflow"
+  # button under Actions). A silently-disabled schedule is the same failure class this
+  # trigger exists to close, so check it after any long quiet stretch.
+  schedule:
+    - cron: '43 5 * * 1'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # github.event_name is part of the key so the weekly scheduled run and a push run on
+  # main can never cancel each other: both would otherwise share "CI-refs/heads/main",
+  # and cancel-in-progress would let the cron kill a real push's guard run (or vice
+  # versa). Within one event type the old behaviour is unchanged.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -44,6 +61,11 @@ jobs:
         # 1.12.0 rather than the 1.12.2 that was bisected, deliberately. "~> 1.12" asserts
         # that 1.12.0 works; inferring that from 1.12.2 would re-create the exact hole this
         # job just found, one minor further up.
+        #
+        # The coupling is no longer only prose: the matrix-floor job below fails the build
+        # when this list's lowest entry stops being required_version's lower bound. When a
+        # version bump lands here, the branch-protection required-checks list has to move
+        # with it too — the check names carry these versions in them.
         terraform: ['1.12.0', '1.15.6']
     defaults:
       run:
@@ -80,6 +102,125 @@ jobs:
 
       - name: terraform test
         run: terraform test
+
+  matrix-floor:
+    name: terraform matrix floor equals required_version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The terraform matrix's comment promises that its lowest entry IS required_version's
+      # lower bound. Until now that coupling was maintained by hand, and module-pin's
+      # comment records how that ends: this repository once shipped a guard pinned to a
+      # version nothing used any more — green, and guarding nothing. This job turns the
+      # promise into a check: it reads both sides from the files themselves (never a copy
+      # of either value, for the same reason vendored-manifest reads the k3s version out
+      # of the file it checks) and fails when they disagree.
+      - name: The lowest matrix entry is the required_version lower bound
+        run: |
+          set -euo pipefail
+
+          constraints=$(grep -hE '^[[:space:]]*required_version[[:space:]]*=' \
+              variants/solo/providers.tf variants/ha/providers.tf \
+            | tr -d ' "' | cut -d= -f2 | sort -u)
+          if [ "$(wc -l <<<"$constraints")" -ne 1 ]; then
+            echo "::error::the variants disagree on required_version: $(tr '\n' ' ' <<<"$constraints")." \
+                 "ADR-0007 keeps them as independent copies, but the Terraform floor is one" \
+                 "contract — reconcile providers.tf before touching the matrix." >&2
+            exit 1
+          fi
+
+          # Only the "~> X.Y" / "~> X.Y.Z" form is parsed, because that is the form the
+          # repository uses. Any other operator fails loudly rather than being guessed at:
+          # a guard that misparses its subject is the module-pin lesson all over again.
+          case "$constraints" in
+            "~>"*) base="${constraints#~>}" ;;
+            *)
+              echo "::error::required_version is '$constraints', which this guard cannot parse." \
+                   "Update this step's parser in the same commit that changes the constraint form." >&2
+              exit 1
+              ;;
+          esac
+          IFS=. read -r major minor patch <<<"$base"
+          expected="${major}.${minor}.${patch:-0}"
+
+          entries=$(sed -n "s/^ *terraform: \[\(.*\)\]/\1/p" .github/workflows/ci.yml \
+            | tr -d " '" | tr ',' '\n')
+          if [ -z "$entries" ]; then
+            echo "::error::could not parse the terraform matrix out of ci.yml — if the" \
+                 "matrix moved or changed shape, move this parser with it." >&2
+            exit 1
+          fi
+          lowest=$(sort -V <<<"$entries" | head -1)
+
+          if [ "$lowest" != "$expected" ]; then
+            echo "::error::the terraform matrix floor is $lowest but required_version" \
+                 "\"~>${base}\" asserts ${expected} works. The lowest matrix entry must BE" \
+                 "the lower bound — raise the constraint and the matrix together" \
+                 "(and the branch-protection required-checks list, which carries the old" \
+                 "version in its check names)." >&2
+            exit 1
+          fi
+          echo "matrix floor $lowest == required_version lower bound $expected"
+
+  tflint:
+    name: tflint (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Same reasoning as the terraform job: the variants are independent copies
+      # (ADR-0007), so one variant's lint result says nothing about the other's.
+      matrix:
+        variant: [solo, ha]
+    defaults:
+      run:
+        working-directory: variants/${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # tflint_version is EXACT rather than "latest", for the usual reason: a linter that
+      # updates itself decides on its own schedule when this build goes red. Dependabot
+      # bumps the action's major; the tflint binary version below moves by hand, in a
+      # commit whose diff shows any new findings next to the bump that caused them.
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      # No .tflint.hcl in this repository, measured before adding this job: tflint's
+      # bundled terraform ruleset ("recommended" preset) is on by default and needs no
+      # configuration file, no `tflint --init`, and no network or credentials. A config
+      # file only earns its place here the day a rule needs adjusting — and then per
+      # finding, in the diff, not as a blanket disable.
+      - name: tflint
+        run: tflint --format compact
+
+  checkov:
+    name: checkov (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [solo, ha]
+    steps:
+      - uses: actions/checkout@v7
+
+      # pipx, because ubuntu-latest's system Python is externally managed (PEP 668) and
+      # this needs no setup-python action just to install one CLI. The version is EXACT
+      # for the same reason tflint's is: a policy scanner that updates itself decides on
+      # its own schedule when this build goes red. Bump it by hand, in a commit whose
+      # diff shows any new findings next to the bump.
+      - name: Install checkov
+        run: pipx install checkov==3.3.11
+
+      # --framework terraform scopes the scan to the .tf files: the packer templates and
+      # the vendored kubernetes manifests under extra-manifests/ have their own guards,
+      # and checkov's terraform config scan is the piece the plan's §M5 asked for. Like
+      # every other job here, this runs without credentials — checkov reads files, not
+      # clouds. Findings are handled per finding: fixed, or suppressed inline with
+      # `#checkov:skip=<rule>: <reason>` where the reason is visible in the diff — never
+      # disabled wholesale.
+      - name: checkov (terraform config scan)
+        run: checkov --directory "variants/${{ matrix.variant }}" --framework terraform --quiet
 
   variant-delta:
     name: variant delta is current
