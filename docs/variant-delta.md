@@ -528,7 +528,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        os          = local.node_os
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
-@@ -366,38 +408,30 @@
+@@ -370,38 +412,30 @@
    #     which provider 1.60.1 still REQUIRES." Moot rather than fixed: 3.1.0 declares
    #     hcloud >= 1.62.0, so 1.60.1 cannot be installed against it at all —
    #     `terraform init` exits 1 with "no available releases match the given constraints
@@ -585,7 +585,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #   count = contains(var.enabled_architectures, "arm") && local.os_arch_requirements.microos.arm && ...
    # Naming x86 here closes the first clause explicitly rather than relying on the second.
    enabled_architectures = ["x86"]
-@@ -427,14 +461,12 @@
+@@ -431,14 +465,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -604,7 +604,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -497,11 +529,35 @@
+@@ -501,11 +533,35 @@
      }
    }
  
@@ -642,7 +642,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -512,12 +568,12 @@
+@@ -516,12 +572,12 @@
        enable_public_ipv6 = false
      },
      {
@@ -658,7 +658,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -525,12 +581,15 @@
+@@ -529,12 +585,15 @@
        enable_public_ipv6 = false
      },
      {
@@ -677,7 +677,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -545,7 +604,7 @@
+@@ -549,7 +608,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -686,7 +686,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -576,7 +635,7 @@
+@@ -580,7 +639,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -695,7 +695,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -596,9 +655,35 @@
+@@ -600,9 +659,35 @@
        enable_public_ipv6 = false
      },
      {
@@ -732,7 +732,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -619,7 +704,7 @@
+@@ -623,7 +708,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -741,7 +741,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -648,7 +733,7 @@
+@@ -652,7 +737,7 @@
        # inserting a pool earlier re-indexes (and recreates) the egress node.
        name        = "agent-ci",
        server_type = "cx33",
@@ -750,7 +750,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -674,15 +759,36 @@
+@@ -678,15 +763,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -790,7 +790,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -735,31 +841,28 @@
+@@ -739,31 +845,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -844,7 +844,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -817,6 +920,25 @@
+@@ -821,6 +924,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -870,7 +870,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -824,13 +946,33 @@
+@@ -828,13 +950,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -909,7 +909,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -859,7 +1001,6 @@
+@@ -863,7 +1005,6 @@
      # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
      # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
      # every node runs this line, so two clusters on one tailnet fight over the same prefix.
@@ -917,7 +917,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
    ]
  
-@@ -891,15 +1032,11 @@
+@@ -895,15 +1036,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -938,7 +938,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -907,26 +1044,14 @@
+@@ -911,26 +1048,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -970,7 +970,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -952,18 +1077,12 @@
+@@ -956,18 +1081,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -995,7 +995,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -973,14 +1092,9 @@
+@@ -977,14 +1096,9 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
@@ -1013,6 +1013,74 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    control_plane_load_balancer_enable_public_network = var.bootstrap_phase
  
    cilium_merge_values = local.cilium_merge_values
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/plan_regressions.tftest.hcl variants/ha/plan_regressions.tftest.hcl
+--- variants/solo/plan_regressions.tftest.hcl
++++ variants/ha/plan_regressions.tftest.hcl
+@@ -3,6 +3,13 @@
+ # all five declared providers are mocked — see that file's header for why both of those
+ # are measured requirements rather than choices.
+ #
++# This file is the solo variant's, with one run added: `ha` hardcodes
++# nat_router.enable_redundancy, so the nat_router_hcloud_token validation is a real gate
++# here and gets its own regression run. ADR-0007 keeps the variants as independent copies
++# rather than a shared module, so the duplication is the point — and
++# tools/gen-variant-delta.sh plus the drift-guard job are what stop the two copies from
++# quietly diverging.
++#
+ # WHY THERE IS STILL NO POSITIVE PLAN RUN, MEASURED RATHER THAN ASSUMED (2026-08-16). A
+ # positive `command = plan` run with this exact mock set was tried in a throwaway copy of
+ # this variant, immediately after the nine negative runs passed there. The plan fails
+@@ -26,6 +33,11 @@
+ #   a bare IP, no "/"      the only coverage of the middle validation (every entry must
+ #                          parse as address/prefix). Pasting a bare IP is the realistic
+ #                          way to get this wrong.
++#   an empty NAT token     the cross-variable class `terraform validate` cannot see:
++#                          main.tf hardcodes enable_redundancy, the keepalived pair
++#                          cannot fail over without an API token, and only this
++#                          validation stands between an empty value and a NAT router
++#                          that silently cannot move the floating IP.
+ 
+ mock_provider "hcloud" {}
+ mock_provider "kubernetes" {}
+@@ -34,7 +46,11 @@
+ mock_provider "time" {}
+ 
+ variables {
+-  hcloud_token                = "not-a-token"
++  hcloud_token = "not-a-token"
++  # 64 characters, because ha validates the length at plan time. Deliberately not
++  # hex: a random-looking 64-char hex string is exactly what a secret scanner should
++  # flag, and a fixture that trips gitleaks on every run is a fixture nobody keeps.
++  nat_router_hcloud_token     = "not-a-real-token-this-is-a-terraform-test-placeholder-value-0000"
+   github_app_id               = "0"
+   github_app_installation_id  = "0"
+   github_app_private_key_path = "secrets/your-github-app.pem.example"
+@@ -61,7 +77,7 @@
+ 
+   bootstrap_phase = true
+ 
+-  # Valid by default; each run below overrides exactly one of the two.
++  # Valid by default; each run below overrides exactly one variable.
+   firewall_kube_api_source = ["100.64.0.0/10"]
+   firewall_ssh_source      = ["100.64.0.0/10"]
+ }
+@@ -104,3 +120,16 @@
+   variables { firewall_kube_api_source = ["100.64.0.1"] }
+   expect_failures = [var.firewall_kube_api_source]
+ }
++
++# ── The NAT router token, without which there is no failover ─────────────────
++# ha-only. main.tf hardcodes nat_router.enable_redundancy = true, and the keepalived
++# pair moves the floating IP by calling the Hetzner API — an empty token builds a NAT
++# router that cannot fail over. `terraform validate` alone never sees this coupling
++# (the M3 lesson); the variable validation catches it at plan time, and this run pins
++# that validation.
++
++run "redundancy_rejects_empty_nat_router_token" {
++  command = plan
++  variables { nat_router_hcloud_token = "" }
++  expect_failures = [var.nat_router_hcloud_token]
++}
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
 --- variants/solo/secrets.auto.example.tfvars
 +++ variants/ha/secrets.auto.example.tfvars
