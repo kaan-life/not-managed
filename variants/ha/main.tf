@@ -369,6 +369,10 @@ affinity:
 }
 
 module "kube-hetzner" {
+  # checkov:skip=CKV_TF_1: A registry pin, deliberately. The comment on `version` below
+  # measures why a git commit source buys no extra immutability here and costs a full
+  # clone per init — and CI's module-pin job checks the registry's version→commit mapping
+  # on every run, which is the guarantee this rule is after.
   providers = {
     hcloud = hcloud
   }
