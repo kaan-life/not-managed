@@ -284,6 +284,34 @@ affinity:
       - level: Metadata
   EOT
 
+  # TWO THINGS THE AUTOSCALER DOES NOT GIVE YOU, both measured on 2026-08-17 on the
+  # cluster this repository is exported from. Neither is a reason not to use it; both
+  # are reasons not to put anything load-bearing behind it without knowing.
+  #
+  # 1. AUTOSCALER NODES ARE NEVER OS-PATCHED. `transactional-update.timer` is disabled
+  #    and inactive on an autoscaler-created node, and enabled and active on every
+  #    static agent. No timer -> no MicroOS transactional-update -> no reboot sentinel
+  #    -> kured never reboots it, even though kured runs there and tolerates the taint.
+  #    Observed: that node had 133 hours of uptime against 12-13 for every other node,
+  #    was the only one still on kernel 6.19.5-2-default while the rest ran 7.1.8-1,
+  #    and was the only node in the cluster with repeated container-runtime stalls.
+  #    `automatically_upgrade_os = true` covers the static pools, not this one. And
+  #    min_nodes = 0 does not make the node short-lived: it stayed up five days
+  #    because it stayed busy.
+  #
+  # 2. SCALE-UP CAN FAIL SILENTLY. docs/managed-k8s-parity.md 3.5 records a measured
+  #    2m47s end-to-end scale-up, and that measurement stands. On 2026-08-17 the same
+  #    mechanism created the server within seconds and the server never joined:
+  #    cloud-init ended in `status: error`, k3s-agent was never installed, and the
+  #    control-plane logged no join attempt. The node had been routing its downloads
+  #    over a tailnet path that was not up yet and got `curl (22) error: 429`. Egress
+  #    from existing nodes was fine at that moment (200 from opensuse, get.k3s.io and
+  #    github). The autoscaler still reported the group at size 1, so the Pending pod
+  #    just stayed Pending -- nothing surfaced the failure.
+  #
+  #    If you pin CI or anything else to an autoscaler pool, alert on the pod staying
+  #    Pending. The autoscaler will not tell you.
+
   autoscaler_nodepools = [
     {
       name        = "autoscaled"
