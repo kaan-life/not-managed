@@ -63,9 +63,12 @@ jobs:
         # job just found, one minor further up.
         #
         # The coupling is no longer only prose: the matrix-floor job below fails the build
-        # when this list's lowest entry stops being required_version's lower bound. When a
-        # version bump lands here, the branch-protection required-checks list has to move
-        # with it too — the check names carry these versions in them.
+        # when this list's lowest entry stops being required_version's lower bound.
+        #
+        # Branch protection needs nothing when these versions move, and that is by design.
+        # These job names carry the version, so protection used to demand check names this
+        # list could rename out from under it; it now requires only the aggregating `gate`
+        # job, whose name never changes.
         terraform: ['1.12.0', '1.15.6']
     defaults:
       run:
@@ -344,3 +347,124 @@ jobs:
             exit 1
           fi
           echo "all commits signed off"
+
+  gate:
+    # THIS JOB'S NAME IS THE BRANCH-PROTECTION CONTRACT. `main` requires exactly one
+    # status check, and it is this one. Every other job reaches the protection rule
+    # through this job's `needs:` list, which is why that list has a guard of its own
+    # below.
+    #
+    # WHY ONE AGGREGATED CHECK RATHER THAN FOURTEEN NAMED ONES. Half of the check names
+    # carry a Terraform version ("terraform (solo, tf 1.12.0)"), so bumping the matrix
+    # renamed the very checks the protection rule demanded — and a protection rule that
+    # names a check nobody reports does not fail loudly: GitHub parks the pull request on
+    # "Expected — waiting for status" indefinitely. The same trap sprang on a renamed or
+    # deleted job. Depending on one stable name removes the coupling instead of
+    # automating it; automating it was never an option anyway, since `administration` is
+    # not among the permissions a GITHUB_TOKEN can hold, so keeping the list in sync from
+    # CI would have meant an admin-scoped secret in a public repository — exactly what
+    # the header of this file forbids.
+    #
+    # Rename this job and every merge blocks until the protection rule is renamed with
+    # it. That is loud, and deliberately so.
+    name: all checks passed
+    runs-on: ubuntu-latest
+    needs:
+      - terraform
+      - matrix-floor
+      - tflint
+      - checkov
+      - variant-delta
+      - vendored-manifest
+      - module-pin
+      - dco
+    # ALWAYS, AND THAT IS THE WHOLE POINT. Without it, a failed dependency would leave
+    # this job "skipped", the required check would never report at all, and the pull
+    # request would hang on "Expected — waiting for status" instead of showing a red X —
+    # the same silent-block failure this job exists to remove.
+    if: always()
+    steps:
+      - uses: actions/checkout@v7
+
+      # The structural half, checked before the results half: an aggregated gate is only
+      # as complete as its `needs:` list, and a job missing from that list cannot block a
+      # merge no matter how red it is. That is the stale-guard class module-pin's comment
+      # records, so it gets the same treatment: read both sides out of this file and fail
+      # when they disagree, rather than trusting anyone to remember.
+      - name: The needs list covers every job in this workflow
+        run: |
+          set -euo pipefail
+
+          jobs=$(sed -n '/^jobs:/,$p' .github/workflows/ci.yml \
+            | grep -oE '^  [a-z][a-z0-9_-]*:' | tr -d ' :' | grep -vx gate | sort -u)
+
+          # Scoped to this job's own block rather than grepping the file for `needs:`, so
+          # that another job gaining a needs list of its own does not confuse the parse.
+          declared=$(awk '
+            /^  gate:/            { in_gate = 1; next }
+            in_gate && /^  [a-z]/ { in_gate = 0 }
+            in_gate && /^    needs:/ { in_needs = 1; next }
+            in_needs && /^      - / { sub(/^      - /, ""); print; next }
+            in_needs                { in_needs = 0 }
+          ' .github/workflows/ci.yml | sort -u)
+
+          if [ -z "$declared" ]; then
+            echo "::error::could not read this job's needs list out of ci.yml. If the job" \
+                 "was renamed or its needs list changed shape, move this parser with it —" \
+                 "a guard that cannot parse its subject must fail, not pass." >&2
+            exit 1
+          fi
+
+          missing=$(comm -23 <(echo "$jobs") <(echo "$declared") | tr '\n' ' ')
+          stale=$(comm -13 <(echo "$jobs") <(echo "$declared") | tr '\n' ' ')
+
+          if [ -n "${missing// /}" ]; then
+            echo "::error::these jobs are not in this gate's needs list: ${missing}" \
+                 "Branch protection requires only this check, so a job the gate does not" \
+                 "depend on cannot block a merge — add it to needs: above." >&2
+            exit 1
+          fi
+          if [ -n "${stale// /}" ]; then
+            echo "::error::this gate's needs list names jobs that no longer exist:" \
+                 "${stale} Remove them: a dependency on a deleted job is a dependency on" \
+                 "nothing." >&2
+            exit 1
+          fi
+          echo "needs list covers all $(wc -w <<<"$jobs") jobs"
+
+      # The results half. `needs` arrives as JSON through the environment rather than
+      # being interpolated into the script, which is the same rule the rest of this file
+      # follows for anything that is not a literal.
+      - name: Every job this gate depends on succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          # Printed unconditionally, because this check is the one the merge box names:
+          # its log has to be enough to see WHICH job failed, without opening another.
+          jq -r 'to_entries[] | "  \(.key): \(.value.result)"' <<<"$NEEDS_JSON"
+
+          bad=$(jq -r 'to_entries[]
+                       | select(.value.result == "failure" or .value.result == "cancelled")
+                       | .key' <<<"$NEEDS_JSON" | tr '\n' ' ')
+          if [ -n "${bad// /}" ]; then
+            echo "::error::these jobs did not succeed: ${bad}" >&2
+            exit 1
+          fi
+
+          # A skip is legitimate on push and schedule — dco only has commits to check on
+          # a pull request. On a pull request nothing may be skipped: that is where this
+          # check gates a merge, and a job that does not run is a job that does not
+          # guard. An `if:` that silently switches a job off would otherwise pass here.
+          skipped=$(jq -r 'to_entries[]
+                           | select(.value.result == "skipped")
+                           | .key' <<<"$NEEDS_JSON" | tr '\n' ' ')
+          if [ -n "${skipped// /}" ] && [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "::error::these jobs were skipped on a pull request: ${skipped}" \
+                 "Nothing may be skipped where this check gates a merge — a job that does" \
+                 "not run is a job that does not guard." >&2
+            exit 1
+          fi
+          echo "all dependencies succeeded"
