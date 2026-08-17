@@ -303,11 +303,15 @@ affinity:
   #    2m47s end-to-end scale-up, and that measurement stands. On 2026-08-17 the same
   #    mechanism created the server within seconds and the server never joined:
   #    cloud-init ended in `status: error`, k3s-agent was never installed, and the
-  #    control-plane logged no join attempt. The node had been routing its downloads
-  #    over a tailnet path that was not up yet and got `curl (22) error: 429`. Egress
-  #    from existing nodes was fine at that moment (200 from opensuse, get.k3s.io and
-  #    github). The autoscaler still reported the group at size 1, so the Pending pod
-  #    just stayed Pending -- nothing surfaced the failure.
+  #    control-plane logged no join attempt. cloud-init-output.log showed `curl (22)
+  #    error: 429` three times, interleaved with tailscaled logging connect timeouts
+  #    from its own tailnet address to an openSUSE mirror. THE CAUSE OF THE 429 IS NOT
+  #    ESTABLISHED: a 429 is a completed HTTP exchange, not an absent route, and this
+  #    traffic is supposed to leave via the NAT router anyway. What is certain is that
+  #    it was not a standing egress fault -- existing nodes got 200 from opensuse,
+  #    get.k3s.io and github at that same moment. The autoscaler still reported the
+  #    group at size 1, so the Pending pod just stayed Pending -- nothing surfaced the
+  #    failure.
   #
   #    If you pin CI or anything else to an autoscaler pool, alert on the pod staying
   #    Pending. The autoscaler will not tell you.
