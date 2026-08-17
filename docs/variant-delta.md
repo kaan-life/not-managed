@@ -741,7 +741,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -652,7 +737,7 @@
+@@ -680,7 +765,7 @@
        # inserting a pool earlier re-indexes (and recreates) the egress node.
        name        = "agent-ci",
        server_type = "cx33",
@@ -750,7 +750,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -678,15 +763,36 @@
+@@ -706,15 +791,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -790,7 +790,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -739,31 +845,28 @@
+@@ -767,31 +873,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -844,7 +844,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -821,6 +924,25 @@
+@@ -849,6 +952,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -870,7 +870,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -828,13 +950,33 @@
+@@ -856,13 +978,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -909,7 +909,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -863,7 +1005,6 @@
+@@ -891,7 +1033,6 @@
      # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
      # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
      # every node runs this line, so two clusters on one tailnet fight over the same prefix.
@@ -917,7 +917,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
    ]
  
-@@ -895,15 +1036,11 @@
+@@ -923,15 +1064,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -938,7 +938,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -911,26 +1048,14 @@
+@@ -939,26 +1076,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -970,7 +970,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -956,18 +1081,12 @@
+@@ -984,18 +1109,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -995,7 +995,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -977,14 +1096,9 @@
+@@ -1005,14 +1124,9 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.

@@ -634,7 +634,35 @@ module "kube-hetzner" {
       # Optionally associate a reverse DNS entry with the floating IP(s).
       # This is useful in combination with the Egress Gateway feature for hosting certain services in the cluster, such as email servers.
       # floating_ip_rns = "my.domain.com"
-      count = 1
+      #
+      # PARKED AT ZERO on 2026-08-17. This pool shipped at count = 1 and the node it
+      # created had no work: it is a cx23 (EUR 6.64 gross/month) whose only job was to
+      # be monitored. Measured on the cluster this repository is exported from, before
+      # the change:
+      #
+      #   - Six running pods, ALL DaemonSets: node-exporter, local-path-reaper, cilium,
+      #     cilium-envoy, hcloud-csi-node, kured. Nothing was ever scheduled onto it.
+      #   - `floating_ip = true` above is commented out, so the node has no egress IP of
+      #     its own. With nat_router set, egress leaves through the NAT router instead,
+      #     and that is where the cluster's public address actually lives.
+      #   - The NoSchedule taint is tolerated cluster-wide by exactly two things --
+      #     prometheus-node-exporter and kured -- both DaemonSets that run everywhere.
+      #     The gitops companion repository references role=egress zero times in 141
+      #     manifests: no nodeSelector, no toleration, nothing.
+      #   - `cilium_egress_gateway_enabled = true` is set further down, but there were
+      #     zero CiliumEgressGatewayPolicy objects. The feature was on; nothing used it.
+      #   - CPU peak over three days of Prometheus retention: 0.49 of 2 cores, which is
+      #     the DaemonSets and nothing else.
+      #
+      # It is parked rather than deleted for the same reason as the storage pool above
+      # and the second and third control planes: agent pools are keyed by list index, so
+      # removing an entry re-indexes and recreates every pool after it -- here the CI
+      # node. Zero is free; deletion is not.
+      #
+      # TO USE IT: set count = 1 AND uncomment floating_ip AND write a
+      # CiliumEgressGatewayPolicy that selects this node. Any two of the three give you
+      # this same node that costs money and routes nothing.
+      count = 0
 
       os = local.node_os
 
