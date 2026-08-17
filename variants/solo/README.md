@@ -12,7 +12,7 @@
 > the ordering as verified and the *explanations* as unproven — the author knows too much
 > to notice what is missing.
 
-One control plane, two general-purpose agents, a dedicated CI node, a dedicated egress
+One control plane, two general-purpose agents, a dedicated CI node, a parked egress
 node, and a NAT router. The Kubernetes API is reachable only over a Tailscale tailnet;
 no node has a public IPv4 except the NAT router.
 

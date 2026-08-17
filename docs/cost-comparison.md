@@ -28,16 +28,16 @@ curl -sS -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/p
 
 | Line | solo | ha | ha total |
 |---|---|---|---|
-| cx23 | 3 — control plane, egress, NAT router | 6 — **3** control planes, egress, **2** NAT routers | €39.84 |
+| cx23 | 2 — control plane, NAT router | 5 — **3** control planes, **2** NAT routers | €33.20 |
 | cx33 | 3 — two general agents, CI agent | 4 — **three** general agents, CI agent | €41.08 |
 | lb11 | 2 — traefik + control plane | 2 | €18.12 |
 | Volumes (100 GB) | ✓ | ✓ | €6.92 |
 | Primary IPv4 | 1 — NAT router | 2 — active + standby NAT router | €1.21 |
 | Snapshots (~1.4 GB MicroOS) | ✓ | ✓ | €0.02 |
 | Autoscaler pool at `min_nodes = 0` | idle | idle | €0.00 |
-| **Total, idle** | **€76.40** | | **€107.19** |
+| **Total, idle** | **€69.76** | | **€100.55** |
 
-**Ratio: 1.40×.**
+**Ratio: 1.44×.**
 
 Two load balancers, not one: enabling the NAT router forces `use_control_plane_lb = true`,
 so there is a control-plane LB in addition to the ingress one. That is €18.12, not €9.06,
@@ -50,23 +50,31 @@ upper bound has an unbounded monthly cost, and "it only scales when it needs to"
 budget. `max_nodes` is a cost ceiling first and a capacity limit second.
 
 **Both variants have one.** `solo` runs `min_nodes = 0, max_nodes = 1`, so its ceiling is
-one cx33 above idle: **€86.67**. `ha` runs `max_nodes = 3`. Until 2026-08-12 the row above
+one cx33 above idle: **€80.03**. `ha` runs `max_nodes = 3`. Until 2026-08-12 the row above
 showed a dash for `solo` and the comparison table in the root README said it had no
 autoscaler at all — both wrong, and both found the same way: a green-field build of `solo`
 produced an `…-autoscaled-…` node that nothing in the documentation predicted.
 
 | `max_nodes` | Worst-case monthly | Ratio to solo |
 |---|---|---|
-| 0 (idle) | €107.19 | 1.40× |
-| 1 | €117.46 | 1.54× |
-| **3 (configured)** | **€138.00** | **1.81×** |
-| 8 | €189.35 | 2.48× |
-| 9 | €199.62 | 2.61× |
+| 0 (idle) | €100.55 | 1.44× |
+| 1 | €110.82 | 1.59× |
+| **3 (configured)** | **€131.36** | **1.88×** |
+| 7 | €172.44 | 2.47× |
+| 8 | €182.71 | 2.62× |
 
 This project set itself a stop condition of **2.5× solo** for the `ha` variant. That
-ceiling is €190.95/month, which leaves €83.77 of burst budget — exactly **eight** cx33
-nodes. So `max_nodes = 8` is not a round number, it is the largest value consistent with
-the constraint, and the configured 3 leaves deliberate room underneath it.
+ceiling is €174.40/month, which leaves €73.84 of burst budget — **seven** cx33 nodes. So
+`max_nodes = 7` is not a round number, it is the largest value consistent with the
+constraint, and the configured 3 leaves deliberate room underneath it.
+
+> **This derivation moved on 2026-08-17, and the reason is worth seeing.** Parking the
+> egress pool at zero took one cx23 out of both variants. That lowered solo's idle bill,
+> which lowered the 2.5× ceiling, which shrank the burst budget — and the largest
+> `max_nodes` consistent with the constraint went from **8 to 7**. The configured value is
+> still 3, so nothing about the running shape changed. It is recorded because a budget
+> derived from another number is only as stable as that number, and this is what it looks
+> like when the base moves.
 
 Raise `max_nodes` only together with the budget line it consumes.
 
