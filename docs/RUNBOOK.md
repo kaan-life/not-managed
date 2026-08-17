@@ -134,8 +134,13 @@ node registers with your tailnet.
 8. `terraform apply`. The API server certificate is reissued with the new SAN, and the
    load balancer's public interface is removed.
 
-> With a `nat_router` present, step 8 also turns on `enable_cp_lb_port_forward`, which
-> rewrites the NAT router's cloud-init and therefore **rebuilds the NAT router once**.
+> With a `nat_router` present, step 8 also makes the NAT router forward
+> `kubernetes_api_port` to the private control-plane LB. In 3.1.0 that is automatic whenever
+> `control_plane_load_balancer_enable_public_network = false`. In 2.19.2 `enable_cp_lb_port_forward`
+> was the input you set; in 3.1.0 there is no such input — the identifier survives as a value the
+> module computes for itself (`nat-router.tf`), so grepping the module still finds it. It rewrites
+> the NAT router's
+> cloud-init and therefore **rebuilds the NAT router once**.
 > The public IP survives (it is a separate, stable primary-IP resource) and `kubectl`
 > over the tailnet is unaffected. Expect it in the plan; it is not drift.
 
