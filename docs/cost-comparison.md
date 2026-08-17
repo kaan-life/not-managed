@@ -39,7 +39,8 @@ curl -sS -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/p
 
 **Ratio: 1.40×.**
 
-Two load balancers, not one: enabling the NAT router forces `use_control_plane_lb = true`,
+Two load balancers, not one: enabling the NAT router forces
+`enable_control_plane_load_balancer = true`,
 so there is a control-plane LB in addition to the ingress one. That is €18.12, not €9.06,
 and it is easy to miss when reading the configuration.
 
