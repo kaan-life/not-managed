@@ -4,7 +4,7 @@
 > stable input API, no versioned interface, and no promise that the next commit will not
 > restructure something you depend on. If that is not what you want, use the upstream
 > module directly — [kube-hetzner](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner)
-> — which this builds on and pins to 2.19.2. See `docs/adr/0002`.
+> — which this builds on and pins to 3.1.0. See `docs/adr/0002`.
 
 Two complete, independently forkable Terraform root configurations for a k3s cluster on
 Hetzner Cloud with ArgoCD, a NAT router, and a Kubernetes API

@@ -6,6 +6,14 @@ service does, what `variants/solo` does today, what mechanism exists in the pinn
 what closing it costs, and — the part that matters most — what stays open even after you
 close it.
 
+> **Version note, added 2026-08-17.** This study was run against **2.19.2**; the repository has
+> since moved to **3.1.0** (`variants/*/main.tf`, and `NOTICE`). Every `Mechanism (2.19.2)` row
+> below is therefore a historical label: it records the version a mechanism was verified in, and is
+> deliberately not rewritten to 3.1.0, because that would claim a re-verification that has not
+> happened. Where an input was *renamed* between the two, the current name is given alongside the
+> old one — a reader copying a 2.19.2 variable name into a 3.1.0 configuration gets an error, and
+> that is worth more than tidiness.
+
 **Module under test:** `kube-hetzner/kube-hetzner/hcloud` **2.19.2**, read from the module
 cache rather than from upstream documentation, so every "the mechanism exists" claim below
 is a claim about the exact code this configuration runs.
@@ -35,7 +43,7 @@ produced a wrong row.
 The configuration contains a commented-out `# placement_group = "default"`, which reads
 like an unused feature. Measured against the live API: two `spread` placement groups exist,
 and every node except the NAT router is in one. kube-hetzner creates them **by default** —
-`placement_group_disable` defaults to `false` — and the commented-out line concerns
+`enable_placement_groups` defaults to `true` — and the commented-out line concerns
 *fine-grained, named* group assignment, not whether groups exist at all.
 
 The real residual gap is sharper and worth stating precisely: a Hetzner **spread** placement
@@ -45,9 +53,13 @@ not have multi-AZ.
 
 ### 1.2 "One load balancer" — there are two
 
-`use_control_plane_lb = true` with `control_plane_lb_enable_public_interface = false`, and
-the second load balancer is not optional: the module documents that `nat_router` *requires*
-`use_control_plane_lb = true`. Load-balancer cost is therefore **2 × €9.06 = €18.12/month**,
+`enable_control_plane_load_balancer = true` with
+`control_plane_load_balancer_enable_public_network = false`, and the second load balancer is not
+optional: the module enforces it. `nat_router` *requires* `enable_control_plane_load_balancer =
+true` unless `node_transport_mode = "tailscale"` — a precondition that fails the plan, not a note
+in the docs. (Both inputs were called `use_control_plane_lb` and
+`control_plane_lb_enable_public_interface` in 2.19.2, when this study was run; 3.1.0 renamed
+them.) Load-balancer cost is therefore **2 × €9.06 = €18.12/month**,
 not €9.06. It is easy to miss when reading the configuration, and it is roughly a quarter of
 the idle bill.
 
@@ -88,7 +100,7 @@ kube-hetzner 2.19.2, recorded as a finding rather than quietly omitted.
 |---|---|
 | **EKS/GKE/AKS** | The control plane is managed, replicated across ≥3 zones, 99.95 % SLA. You never see etcd, never restore it, never size it. |
 | **`solo` today** | One control-plane node. Two further control-plane pools are declared at `count = 0`. Losing the node does not stop running pods, but it stops scheduling, self-healing, Argo CD sync and every `kubectl`. |
-| **Mechanism (2.19.2)** | Set the parked pools to `count = 1` → three control planes. `use_control_plane_lb = true` is already on. etcd needs an odd member count ≥ 3 for quorum. |
+| **Mechanism (2.19.2)** | Set the parked pools to `count = 1` → three control planes. `use_control_plane_lb = true` is already on (`enable_control_plane_load_balancer` in 3.1.0). etcd needs an odd member count ≥ 3 for quorum. |
 | **€ delta** | **+€13.28** (2 × cx23) |
 | **How `ha` does it** | Three members: two in `var.primary_location`, one in `var.secondary_location`, with `etcd-arg` heartbeat and election timeouts widened for the inter-datacentre hop. |
 | **Residual gap** | You still operate etcd. Losing 2 of 3 members is unrecoverable without a restore. And a cross-location member is a real WAN hop: etcd is fsync- and heartbeat-sensitive, so a 2+1 split needs tuned election timeouts, or quorum stays in one location and multi-location buys availability of the *API*, not of *quorum*. `ha` therefore defaults `secondary_location` to a **nearby** datacentre and documents the distant one as a deliberate choice. **The round-trip time of the pair you actually build is a number to measure, not to inherit from this document.** |
@@ -172,7 +184,7 @@ kube-hetzner 2.19.2, recorded as a finding rather than quietly omitted.
 | | |
 |---|---|
 | **EKS/GKE/AKS** | An optional private endpoint: the API is reachable only from the VPC or peered networks. Public by default; going private is opt-in and often awkward. |
-| **`solo` today** | **Already stronger than the managed default.** The kube-API is restricted to a private overlay network (`firewall_kube_api_source`), `control_plane_lb_enable_public_interface = false`, and — measured — no node has a public IPv4 except the NAT router. Egress leaves through one address. |
+| **`solo` today** | **Already stronger than the managed default.** The kube-API is restricted to a private overlay network (`firewall_kube_api_source`), `control_plane_load_balancer_enable_public_network = false` (named `control_plane_lb_enable_public_interface` in 2.19.2), and — measured — no node has a public IPv4 except the NAT router. Egress leaves through one address. |
 | **Mechanism (2.19.2)** | Already applied. |
 | **€ delta** | €0 |
 | **Residual gap** | The design assumes a **trusted overlay network**, and its provider is a third party in the authentication path. `additional_tls_sans` is a variable rather than a hardcoded address, so a fork does not inherit somebody else's SAN. **There is no documented break-glass path if the overlay network provider is unavailable** — a genuine operational gap this matrix surfaced, and it belongs in the runbook rather than in a comment. |

@@ -13,9 +13,10 @@ where `variants/ha` diverges. The mechanical difference between the two is
 ## 1. The Kubernetes API is on a private overlay network, not on the internet
 
 `firewall_kube_api_source` restricts the API to a Tailscale tailnet.
-`control_plane_lb_enable_public_interface = false` removes the control-plane load
-balancer's public interface entirely. Measured against the live API: **no node has a public
-IPv4 address except the NAT router.**
+`control_plane_load_balancer_enable_public_network = false` removes the control-plane load
+balancer's public interface entirely. (`docs/RUNBOOK.md` records how the old 2.19.2 name for
+this input, `control_plane_lb_enable_public_interface`, was found not to exist in 3.1.0.)
+Measured against the live API: **no node has a public IPv4 address except the NAT router.**
 
 **Why.** Reachability becomes the first authentication factor. An attacker who steals a
 kubeconfig still has to be on the tailnet to use it. Managed Kubernetes offers this as an
@@ -44,11 +45,14 @@ upgrade channel. A single `cx23` NAT router carries all of it.
 
 **Three consequences worth knowing before you copy this.**
 
-1. **It forces a second load balancer.** `nat_router` requires `use_control_plane_lb =
-   true`, so there is a control-plane LB in addition to the ingress one. That is €18.12/month,
+1. **It forces a second load balancer.** `nat_router` requires
+   `enable_control_plane_load_balancer = true` (a hard precondition in the module, not just
+   advice), so there is a control-plane LB in addition to the ingress one. That is €18.12/month,
    not €9.06 — a quarter of the idle bill, and easy to miss when reading the configuration.
-2. **Enabling it rewrites the NAT router's cloud-init once.** The module turns on
-   `enable_cp_lb_port_forward`, which triggers a **one-time NAT-router rebuild**. The public
+2. **Enabling it rewrites the NAT router's cloud-init once.** With
+   `control_plane_load_balancer_enable_public_network = false` the module forwards
+   `kubernetes_api_port` to the private control-plane LB by itself — in 3.1.0 that is automatic
+   and there is no input to set. It triggers a **one-time NAT-router rebuild**. The public
    address survives, because it is a separate stable primary-IP resource, and `kubectl` over
    the tailnet is unaffected. Expect it, and do not mistake it for drift.
 3. **The forwarded API port is firewall-gated.** The resulting 6443 forward on the NAT

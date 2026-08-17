@@ -24,7 +24,7 @@ Verified on 2026-08-05 against the pinned versions.
 
 | Component | Pinned | License | Why no obligation |
 |---|---|---|---|
-| `kube-hetzner/kube-hetzner/hcloud` module | 2.19.2 | MIT | fetched by Terraform at init; not vendored |
+| `kube-hetzner/kube-hetzner/hcloud` module | 3.1.0 | MIT | fetched by Terraform at init; not vendored |
 | argo-cd Helm chart (`argoproj/argo-helm`) | 8.2.5 | Apache-2.0 | fetched by Helm; not vendored |
 | Argo CD itself | via chart | Apache-2.0 | container image |
 | hcloud CSI driver | v2.22.0 | MIT | container image |
@@ -43,8 +43,10 @@ from `extra-manifests/`.**
 ## Decision
 
 `NOTICE` reproduces the upstream MIT permission text and attributes
-`kube-hetzner/terraform-hcloud-kube-hetzner` by name, URL and pinned version (v2.19.2), covering both
-the Packer template and `main.tf`. `THIRD_PARTY.md` lists every row above, including the
+`kube-hetzner/terraform-hcloud-kube-hetzner` by name, URL and version. Since the 3.1.0 upgrade it
+names **two** versions, because the two things it covers no longer track together: the module
+`main.tf` consumes is **v3.1.0**, while the vendored Packer template was derived from **v2.19.2**
+and has not been re-derived since. `NOTICE` states both; this table's row above tracks the module. `THIRD_PARTY.md` lists every row above, including the
 referenced-only components, with its license and the reason it is or is not an obligation.
 
 ## Alternatives Considered
