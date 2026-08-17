@@ -7,7 +7,7 @@
 > — which this builds on and pins to 2.19.2. See `docs/adr/0002`.
 
 Two complete, independently forkable Terraform root configurations for a k3s cluster on
-Hetzner Cloud with ArgoCD, a NAT router, a dedicated egress node, and a Kubernetes API
+Hetzner Cloud with ArgoCD, a NAT router, and a Kubernetes API
 served only over a Tailscale tailnet.
 
 **Copy one directory. It is yours.** They do not reference each other.

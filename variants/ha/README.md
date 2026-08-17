@@ -22,7 +22,7 @@
 > changed which variant they would pick — which is exactly the damage a stale banner does.
 
 Three control planes across two datacentres, three general-purpose agents, a cluster
-autoscaler, a dedicated CI node, a dedicated egress node, and a redundant NAT router.
+autoscaler, a dedicated CI node, a parked egress pool, and a redundant NAT router.
 Same architecture as `variants/solo`, different operating point.
 
 ## Choose this variant if
@@ -36,7 +36,7 @@ Same architecture as `variants/solo`, different operating point.
 - one datacentre going away should cost you availability, not the cluster.
 
 Choose `variants/solo` if none of those are true. This one costs about **1.4×** as much
-before any autoscaling, and roughly 1.8× with the autoscaler at its configured ceiling.
+before any autoscaling, and roughly 1.9× with the autoscaler at its configured ceiling.
 Three control planes are three things to patch, not one.
 
 ## What differs from `solo`, and what each difference buys

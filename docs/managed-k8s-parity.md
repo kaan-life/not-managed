@@ -68,7 +68,7 @@ which is what `ha` buys.
 
 Cost is measured, in its own document, and not repeated here: **`docs/cost-comparison.md`**
 carries the unit prices read from the pricing API, both variants side by side, and the
-autoscaler's worst case. In summary, `ha` idles at **1.40×** `solo`, and its `max_nodes` is
+autoscaler's worst case. In summary, `ha` idles at **1.44×** `solo`, and its `max_nodes` is
 chosen as a budget ceiling rather than as a capacity wish.
 
 The per-row **€ delta** figures in §3 are the marginal cost of closing that one row. They do

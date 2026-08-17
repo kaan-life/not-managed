@@ -10,6 +10,9 @@ locals {
   # kured ships tolerations for control-plane/master only; without the egress toleration it
   # never runs on the egress node, that node never reboots, and MicroOS transactional-update
   # snapshots fill its 40GB disk (DiskPressure since 2026-06-05, follow-up 07).
+  # The egress pool ships at count = 0 since 2026-08-17, so today this entry protects a node
+  # that does not exist. It stays for exactly that reason: bring the pool back and the
+  # failure above returns with it, silently, three weeks later.
   # Strategic merge REPLACES the whole tolerations list (no patchMergeKey on tolerations),
   # so repeated applies are idempotent — never switch this to a json-patch "add".
   # NB: re-apply after a kured_version bump (the upstream manifest resets tolerations).
