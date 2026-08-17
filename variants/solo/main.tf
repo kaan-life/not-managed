@@ -318,7 +318,6 @@ affinity:
   #
   #    If you pin CI or anything else to an autoscaler pool, alert on the pod staying
   #    Pending. The autoscaler will not tell you.
-
   autoscaler_nodepools = [
     {
       name        = "autoscaled"
@@ -713,7 +712,34 @@ module "kube-hetzner" {
       #
       # MUST stay last in this list: kube-hetzner keys agent nodes by list index, so
       # inserting a pool earlier re-indexes (and recreates) the egress node.
-      name        = "agent-ci",
+      name = "agent-ci",
+      # AUTOSCALER VARIANT TRIED AND REVERTED on 2026-08-17. This pool was briefly
+      # replaced by an autoscaler_nodepool with an identical label and taint. The saving
+      # was real -- this node sat idle between builds, CPU peak 0.33 of 4 cores over
+      # three days of Prometheus retention -- but it did not work, and not for the
+      # reason that had been designed around:
+      #
+      #   - The autoscaler did its half correctly. It matched the Pending build pod
+      #     against the ci node group and created the server within seconds.
+      #   - That server never joined. cloud-init ended in `status: error`, k3s-agent was
+      #     never installed, and the control-plane k3s log showed no join attempt at all.
+      #   - cloud-init-output.log on that node showed `curl: (22) ... error: 429` three
+      #     times, interleaved with tailscaled logging connect timeouts from its own
+      #     tailnet address to an openSUSE mirror. THE CAUSE OF THE 429 IS NOT
+      #     ESTABLISHED: a 429 is a completed HTTP exchange, not an absent route, and
+      #     this traffic is supposed to leave via the NAT router anyway.
+      #   - It was not a standing egress fault: from an existing node at that same
+      #     moment, download.opensuse.org, get.k3s.io and github.com all returned 200.
+      #
+      # The existing autoscaler node had joined successfully weeks earlier, so this is a
+      # race rather than a reproducible failure -- and that is exactly what makes it
+      # unfit for CI. A build that asks for a node which sometimes never arrives hangs
+      # until someone aborts it by hand.
+      #
+      # To try again: understand the race first. Useful starting points are the ordering
+      # inside cloud-init (Tailscale before or after the k3s install) and whether
+      # HCLOUD_SERVER_CREATION_TIMEOUT or a readiness check can surface the failure
+      # instead of leaving it silent.
       server_type = "cx33",
       location    = "nbg1",
       labels = [
@@ -989,7 +1015,8 @@ module "kube-hetzner" {
   # false is therefore the value that keeps Cilium exactly as deployed. It is also the only
   # value 3.1.0 accepts here at all: validation-contract.tf:1112 fails the plan outright
   # because cilium_egress_gateway_enabled requires kube-proxy replacement, and that egress
-  # gateway is what pins outbound traffic to the dedicated egress node's IP.
+  # gateway is what would pin outbound traffic to a dedicated egress node's IP, if that
+  # pool were not parked at count = 0.
   #
   # WHAT IT CHANGES ON THE NEXT APPLY: k3s stops starting the redundant embedded kube-proxy
   # (`disable-kube-proxy: true` lands in config.yaml). Cilium has been serving that role

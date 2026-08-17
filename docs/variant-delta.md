@@ -520,12 +520,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    # TWO THINGS THE AUTOSCALER DOES NOT GIVE YOU, both measured on 2026-08-17 on the
    # cluster this repository is exported from. Neither is a reason not to use it; both
    # are reasons not to put anything load-bearing behind it without knowing.
-@@ -318,14 +361,13 @@
-   #
-   #    If you pin CI or anything else to an autoscaler pool, alert on the pod staying
-   #    Pending. The autoscaler will not tell you.
--
-   autoscaler_nodepools = [
+@@ -322,9 +365,9 @@
      {
        name        = "autoscaled"
        server_type = "cx33"
@@ -537,7 +532,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        os          = local.node_os
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
-@@ -405,38 +447,30 @@
+@@ -404,38 +447,30 @@
    #     which provider 1.60.1 still REQUIRES." Moot rather than fixed: 3.1.0 declares
    #     hcloud >= 1.62.0, so 1.60.1 cannot be installed against it at all —
    #     `terraform init` exits 1 with "no available releases match the given constraints
@@ -594,7 +589,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #   count = contains(var.enabled_architectures, "arm") && local.os_arch_requirements.microos.arm && ...
    # Naming x86 here closes the first clause explicitly rather than relying on the second.
    enabled_architectures = ["x86"]
-@@ -466,14 +500,12 @@
+@@ -465,14 +500,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -613,7 +608,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -536,11 +568,35 @@
+@@ -535,11 +568,35 @@
      }
    }
  
@@ -651,7 +646,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -551,12 +607,12 @@
+@@ -550,12 +607,12 @@
        enable_public_ipv6 = false
      },
      {
@@ -667,7 +662,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -564,12 +620,15 @@
+@@ -563,12 +620,15 @@
        enable_public_ipv6 = false
      },
      {
@@ -686,7 +681,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -584,7 +643,7 @@
+@@ -583,7 +643,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -695,7 +690,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -615,7 +674,7 @@
+@@ -614,7 +674,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -704,7 +699,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -635,9 +694,35 @@
+@@ -634,9 +694,35 @@
        enable_public_ipv6 = false
      },
      {
@@ -741,7 +736,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -658,7 +743,7 @@
+@@ -657,7 +743,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -750,16 +745,46 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -715,7 +800,7 @@
+@@ -712,36 +798,9 @@
+       #
+       # MUST stay last in this list: kube-hetzner keys agent nodes by list index, so
        # inserting a pool earlier re-indexes (and recreates) the egress node.
-       name        = "agent-ci",
+-      name = "agent-ci",
+-      # AUTOSCALER VARIANT TRIED AND REVERTED on 2026-08-17. This pool was briefly
+-      # replaced by an autoscaler_nodepool with an identical label and taint. The saving
+-      # was real -- this node sat idle between builds, CPU peak 0.33 of 4 cores over
+-      # three days of Prometheus retention -- but it did not work, and not for the
+-      # reason that had been designed around:
+-      #
+-      #   - The autoscaler did its half correctly. It matched the Pending build pod
+-      #     against the ci node group and created the server within seconds.
+-      #   - That server never joined. cloud-init ended in `status: error`, k3s-agent was
+-      #     never installed, and the control-plane k3s log showed no join attempt at all.
+-      #   - cloud-init-output.log on that node showed `curl: (22) ... error: 429` three
+-      #     times, interleaved with tailscaled logging connect timeouts from its own
+-      #     tailnet address to an openSUSE mirror. THE CAUSE OF THE 429 IS NOT
+-      #     ESTABLISHED: a 429 is a completed HTTP exchange, not an absent route, and
+-      #     this traffic is supposed to leave via the NAT router anyway.
+-      #   - It was not a standing egress fault: from an existing node at that same
+-      #     moment, download.opensuse.org, get.k3s.io and github.com all returned 200.
+-      #
+-      # The existing autoscaler node had joined successfully weeks earlier, so this is a
+-      # race rather than a reproducible failure -- and that is exactly what makes it
+-      # unfit for CI. A build that asks for a node which sometimes never arrives hangs
+-      # until someone aborts it by hand.
+-      #
+-      # To try again: understand the race first. Useful starting points are the ordering
+-      # inside cloud-init (Tailscale before or after the k3s install) and whether
+-      # HCLOUD_SERVER_CREATION_TIMEOUT or a readiness check can surface the failure
+-      # instead of leaving it silent.
++      name        = "agent-ci",
        server_type = "cx33",
 -      location    = "nbg1",
 +      location    = var.primary_location,
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -741,15 +826,36 @@
+@@ -767,15 +826,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -799,7 +824,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -802,31 +908,28 @@
+@@ -828,31 +908,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -853,7 +878,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -884,6 +987,25 @@
+@@ -910,6 +987,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -879,7 +904,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -891,13 +1013,33 @@
+@@ -917,13 +1013,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -918,7 +943,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -926,7 +1068,6 @@
+@@ -952,7 +1068,6 @@
      # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
      # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
      # every node runs this line, so two clusters on one tailnet fight over the same prefix.
@@ -926,7 +951,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
    ]
  
-@@ -958,15 +1099,11 @@
+@@ -984,15 +1099,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -947,7 +972,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -974,26 +1111,14 @@
+@@ -1000,27 +1111,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -967,7 +992,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  # false is therefore the value that keeps Cilium exactly as deployed. It is also the only
 -  # value 3.1.0 accepts here at all: validation-contract.tf:1112 fails the plan outright
 -  # because cilium_egress_gateway_enabled requires kube-proxy replacement, and that egress
--  # gateway is what pins outbound traffic to the dedicated egress node's IP.
+-  # gateway is what would pin outbound traffic to a dedicated egress node's IP, if that
+-  # pool were not parked at count = 0.
 -  #
 -  # WHAT IT CHANGES ON THE NEXT APPLY: k3s stops starting the redundant embedded kube-proxy
 -  # (`disable-kube-proxy: true` lands in config.yaml). Cilium has been serving that role
@@ -979,7 +1005,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -1019,18 +1144,12 @@
+@@ -1046,18 +1144,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -1004,7 +1030,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -1040,14 +1159,9 @@
+@@ -1067,14 +1159,9 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
