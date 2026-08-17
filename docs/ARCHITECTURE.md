@@ -62,20 +62,30 @@ which is where the extra €6.64 in the cost comparison goes.
 
 ---
 
-## 3. A dedicated egress node
+## 3. A dedicated egress node — declared, and parked at zero
 
-Cilium's egress gateway is enabled, and one `cx23` node is labelled
-`node.kubernetes.io/role=egress` and **tainted** so nothing lands on it by accident.
+Cilium's egress gateway is enabled, and an `egress` agent nodepool is declared: a `cx23`
+labelled `node.kubernetes.io/role=egress` and **tainted** so nothing lands on it by
+accident. **Since 2026-08-17 that pool ships at `count = 0`.** The comment above it in
+`variants/*/main.tf` says why, and what to change to bring it back.
 
-**Why.** Third-party APIs that authenticate by IP allowlist need your traffic to come from
-a predictable address. Without an egress gateway, a pod's source address is whichever node
-it happened to be scheduled on, so an allowlist has to cover every node — and break every
-time you add one. Pinning egress to one node makes the allowlist a single entry that
-survives scaling.
+**Why the pool exists.** Third-party APIs that authenticate by IP allowlist need your
+traffic to come from a predictable address. Without an egress gateway, a pod's source
+address is whichever node it happened to be scheduled on, so an allowlist has to cover
+every node — and break every time you add one. Pinning egress to one node makes the
+allowlist a single entry that survives scaling.
 
-**What it costs.** One more server, and a taint you have to tolerate deliberately in any
-workload that needs the stable address. That second part is a feature: it means "this
-workload's source IP matters" is written down in the workload, not remembered.
+**Why it is parked anyway.** With a `nat_router` present, egress already leaves through a
+single predictable address — the NAT router's — so the gateway node buys nothing until you
+have a workload that needs a *second*, different one. Running it unused was measured on the
+source cluster: six pods, all DaemonSets, no `CiliumEgressGatewayPolicy` anywhere, and a
+CPU peak of 0.49 of 2 cores over three days of retention. That is €6.64 gross per month for
+a node whose only job was to be monitored.
+
+**What turning it on costs.** One more server, `floating_ip = true` so it has an address of
+its own, a `CiliumEgressGatewayPolicy` that selects it, and a taint you have to tolerate
+deliberately in any workload that needs the stable address. That last part is a feature: it
+means "this workload's source IP matters" is written down in the workload, not remembered.
 
 ---
 

@@ -7,7 +7,7 @@
 > — which this builds on and pins to 2.19.2. See `docs/adr/0002`.
 
 Two complete, independently forkable Terraform root configurations for a k3s cluster on
-Hetzner Cloud with ArgoCD, a NAT router, a dedicated egress node, and a Kubernetes API
+Hetzner Cloud with ArgoCD, a NAT router, and a Kubernetes API
 served only over a Tailscale tailnet.
 
 **Copy one directory. It is yours.** They do not reference each other.
@@ -22,8 +22,8 @@ served only over a Tailscale tailnet.
 | Can you drain a worker? | **No.** Nowhere to put the pods | Yes |
 | Autoscaler | 0 → **1** node, `cx33` | 0 → **3** nodes, `cx33`, ~3 min to schedule |
 | NAT router | 1 — single point of failure for egress *and* the API path | 2, keepalived VIP, second datacentre |
-| Cost, idle | **€76** / month | **€107** / month (1.40×) |
-| Cost, autoscaler at ceiling | €86 / month | €138 / month (1.81×) |
+| Cost, idle | **€70** / month | **€101** / month (1.44×) |
+| Cost, autoscaler at ceiling | €80 / month | €131 / month (1.88×) |
 | Proven by | **running a real workload**, and a green-field build from this tree | a green-field build from this tree: booted, control-plane killed, etcd restored |
 
 > **This table said `solo` had no autoscaler until 2026-08-12, and that was wrong.**
