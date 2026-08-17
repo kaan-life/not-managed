@@ -136,9 +136,11 @@ Stated up front so you do not spend an evening on it:
 - **Refactoring the variants into a shared module.** Rejected twice, with reasons, in
   ADR-0002 and ADR-0007.
 - **Adding an abstraction so this can be consumed as a dependency.** Same two ADRs. Fork it.
-- **Upgrading `kube-hetzner` past 2.19.2 in `variants/solo`** without addressing the two
-  competing constraints documented at the top of its `main.tf`. A proposal that engages
-  with them is welcome; a version bump that does not will be sent back with a pointer to
-  that comment.
+- **Bumping `kube-hetzner` past the pinned 3.1.0** without engaging with the pin block at
+  the top of each variant's `main.tf`. That block records what the previous pin's two
+  justifications turned out to be worth when they were re-measured for the 2.19.2 → 3.1.0
+  upgrade — one moot, one real but survivable — and what holds 3.1.0 in place now. A
+  proposal that engages with it is welcome; a version bump that does not will be sent back
+  with a pointer to that comment.
 - **Claiming OpenTofu compatibility** without a CI job that proves it (ADR-0004 chose to
   document it as untested rather than assert it).
