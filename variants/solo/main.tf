@@ -291,13 +291,38 @@ affinity:
   # cluster this repository is exported from. Neither is a reason not to use it; both
   # are reasons not to put anything load-bearing behind it without knowing.
   #
-  # 1. AUTOSCALER NODES ARE NEVER OS-PATCHED. `transactional-update.timer` is disabled
-  #    and inactive on an autoscaler-created node, and enabled and active on every
-  #    static agent. No timer -> no MicroOS transactional-update -> no reboot sentinel
-  #    -> kured never reboots it, even though kured runs there and tolerates the taint.
-  #    Observed: that node had 133 hours of uptime against 12-13 for every other node,
-  #    was the only one still on kernel 6.19.5-2-default while the rest ran 7.1.8-1,
-  #    and was the only node in the cluster with repeated container-runtime stalls.
+  # 1. AUTOSCALER NODES GET NO ONGOING OS UPDATES. `transactional-update.timer` is
+  #    disabled and inactive on an autoscaler-created node, and enabled and active on
+  #    every static agent -- same snapshot, same kernel on arrival. No timer -> no MicroOS
+  #    transactional-update -> no reboot sentinel -> kured never reboots it, even though
+  #    kured runs there and tolerates the taint. Observed: that node had 137 hours of
+  #    uptime against 12-13 for every other node, and was the only one still on kernel
+  #    6.19.5-2-default while the rest ran 7.1.8-1.
+  #
+  #    ROOT CAUSE, established 2026-08-18 and reported upstream as kube-hetzner issue
+  #    #2266 with a proposed fix in #2267. The module's shared cloud-init runcmd disables
+  #    the timer for the duration of first boot, which is correct in itself: an update
+  #    running mid-bootstrap can race the k3s install. Re-enabling it afterwards happens
+  #    in exactly one place -- `terraform_data.os_upgrade_toggle` in modules/host, keyed
+  #    on `hcloud_server.server.id`. Autoscaler nodes are not `hcloud_server` resources;
+  #    the cluster autoscaler creates them from a rendered cloudInit blob. That toggle
+  #    therefore cannot run for them, and nothing else re-enables the timer.
+  #
+  #    Be precise about the claim. The timer most likely still fires ONCE during first
+  #    boot: the same runcmd deletes /var/run/reboot-required immediately after disabling
+  #    it, which only makes sense if a sentinel can already exist by then. So it is at
+  #    most one first-boot update whose result is discarded, and nothing afterwards --
+  #    not "never patched at all".
+  #
+  #    An earlier version of this comment also noted that this was the only node with
+  #    repeated container-runtime stalls, which invited the reading that being unpatched
+  #    caused them. That reading is probably wrong: a static node created later ran the
+  #    same 6.19.5 kernel from the same snapshot and did not stall, while the stalling
+  #    node carried 63 of ~110 pods on 4 vCPU. Load is the better explanation, and the
+  #    measurable precursor is the kubelet's own housekeeping loop -- it logged
+  #    "Housekeeping took longer than expected" at 1.4s before the first stall and at
+  #    46.4s before a later one, in which the container runtime never went down at all.
+  #
   #    `automatically_upgrade_os = true` covers the static pools, not this one. And
   #    min_nodes = 0 does not make the node short-lived: it stayed up five days
   #    because it stayed busy.
@@ -315,6 +340,13 @@ affinity:
   #    get.k3s.io and github at that same moment. The autoscaler still reported the
   #    group at size 1, so the Pending pod just stayed Pending -- nothing surfaced the
   #    failure.
+  #
+  #    Retested 2026-08-18 with the same method: the scale-up succeeded -- server created,
+  #    node Ready in 138s, the pending pod scheduled at 154s. cloud-init finished with
+  #    `status: done` and zero 429s. Notably, that successful boot still logged 26
+  #    tailscaled connect timeouts, so the tailscale noise is background and NOT the
+  #    cause of the failure above. The failure mode is real but intermittent; the cause
+  #    of the 429 remains unestablished.
   #
   #    If you pin CI or anything else to an autoscaler pool, alert on the pod staying
   #    Pending. The autoscaler will not tell you.
