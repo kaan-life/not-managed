@@ -45,6 +45,47 @@ Each variant's README states its own trade-offs and what it does *not* give you.
 `docs/cost-comparison.md` shows the measured prices; `docs/variant-delta.md` is the exact
 diff between the two.
 
+## What the same cluster costs on the big three
+
+Same shape as `solo` — three 4 vCPU / 8 GB agents and two 2 vCPU / 4 GB nodes — priced on
+**2026-08-20** from each vendor's own public price API, net of VAT, USD converted at the ECB
+reference rate for that week (EUR/USD 1.1605). Each row uses the **cheapest predefined
+instance that meets the spec, any architecture**, which is the reading most favourable to the
+vendor; `solo` stays on the x86 `cx` types it actually declares.
+
+| Compute, monthly | Instances priced | Net € | × `solo` |
+|---|---|---|---|
+| **`not-managed` solo** | 3× `cx33` + 2× `cx23` | **€36** | **1.0×** |
+| AWS `eu-central-1` | 3× `c6g.xlarge` + 2× `t4g.medium` | €341 | 9.4× |
+| Azure `germanywestcentral` | 3× `B4als_v2` + 2× `B2als_v2` | €343 | 9.4× |
+| GCP `europe-west3` | 3× `e2-standard-4` + 2× `e2-medium` | €380 | 10.4× |
+
+**Compute only, on every row.** Load balancers, block storage and egress are excluded
+everywhere — including from `solo`'s own €36, whose full bill is €69.76 gross in
+`docs/cost-comparison.md`. Excluding them uniformly is what makes the four rows comparable.
+
+**Where `solo`'s €36 comes from.** `variants/solo/main.tf` declares eight agent and
+control-plane pools, four of which sit at `count = 0`: the second and third control planes,
+`storage`, and `egress` (parked 2026-08-17 — the comment there explains why zero beats
+deletion). What runs at idle is three `cx33` — `agent-small`, `agent-large`, `agent-ci` — and
+two `cx23`, one control plane plus the NAT router. That is 3 × €8.49 + 2 × €5.49 = **€36.45**
+net. The autoscaler is `min_nodes = 0` and adds nothing until it fires.
+
+AWS and Azure match the spec exactly. **GCP does not**, and its row is the weaker one twice
+over: no predefined `e2` type offers 4 vCPU with 8 GB, so those agents carry 16 GB and the row
+is oversized (custom machine types would fit, but their price was not retrieved); and where
+the other three rows come from the Hetzner Cloud pricing API, the AWS metered-unit maps for
+EU (Frankfurt)/Linux and the Azure Retail Prices API, Google's Cloud Billing Catalog API
+refuses unauthenticated callers, so the GCP figures come from the third-party mirror
+`gcloud-compute.com` (data stamped 2026-08-16), unverified against a Google-operated source.
+
+Egress is left out because the reference cluster moves 32 GB/month, immaterial at any
+published rate.
+
+**A 9× multiplier is not by itself an argument.** It buys none of the twelve capabilities in
+`docs/managed-k8s-parity.md`, six of which no self-hosted stack closes — the next section is
+about exactly that.
+
 ## What this is honest about
 
 Neither variant is managed Kubernetes, and six of the twelve capabilities in
