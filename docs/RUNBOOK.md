@@ -10,6 +10,8 @@ reading this after following a comment, you are in the right place.
 2. [Bootstrapping a new cluster: the two-pass build](#2-bootstrapping-a-new-cluster-the-two-pass-build)
 3. [State: what protects it, and how to get it back](#3-state-what-protects-it-and-how-to-get-it-back)
 4. [etcd: what is backed up, and how to restore it](#4-etcd-what-is-backed-up-and-how-to-restore-it)
+5. [local-path: why this repository owns a k3s component](#5-local-path-why-this-repository-owns-a-k3s-component)
+6. [Dead man's switch: noticing from outside that the cluster stopped reporting](#6-dead-mans-switch-noticing-from-outside-that-the-cluster-stopped-reporting)
 
 ---
 
@@ -647,3 +649,121 @@ restart takes the *force* path, where the checksum comparison is skipped entirel
 both reach the same `shouldSkipFile` check, and that check runs before either, so the
 result carries. Confirming it after a genuine restart still costs nothing and is worth
 doing the next time one happens.
+
+---
+
+## 6. Dead man's switch: noticing from outside that the cluster stopped reporting
+
+Alert evaluation runs on the cluster. Every rule you write, and every notification it
+would send, depends on a pod that lives on a node inside the thing being watched. When
+that node stops, nothing evaluates and nothing pages — and the rule that would have told
+you so is one of the rules that stopped. `docs/managed-k8s-parity.md` §3.3 reaches the
+same gap from the other side and names the compensation without shipping it: "alert on
+NotReady from outside the cluster".
+
+This section ships it, in the cheapest form that actually inverts the dependency.
+
+### The mechanism, and why it is not another exporter
+
+Prometheus already writes a filtered copy of its series outward, to a hosted Prometheus,
+over `remoteWrite`. The observer you need is therefore not a new component: it is **one
+alert rule in the hosted system that fires when those series stop arriving**. Nothing
+about it runs on the cluster, so the cluster cannot take it down with itself.
+
+### Prerequisites, checked before the rule is written
+
+Two things must hold. Check both — a rule written against a series that never arrives
+fires immediately and permanently, which is worth less than no rule at all, because it
+also trains you to ignore it.
+
+1. **The series `up` survives your write filter.** `remoteWrite.write_relabel_configs`
+   normally carries a `keep` action listing the metric families worth exporting, because
+   a free tier has an active-series cap and `node_*` alone would exceed it. Confirm `up`
+   is one of them. It costs one series per scrape target and it is the series this whole
+   section rests on.
+2. **The write is succeeding right now.** From inside the Prometheus pod:
+
+   ```bash
+   # expect 0
+   wget -qO- 'http://localhost:9090/api/v1/query?query=rate(prometheus_remote_storage_samples_failed_total%5B10m%5D)'
+   # expect a number that is larger the second time you run it
+   wget -qO- 'http://localhost:9090/api/v1/query?query=prometheus_remote_storage_samples_total'
+   ```
+
+   A zero failure rate on its own proves nothing: it is also what you get when nothing is
+   being sent. The pair of reads is the check, not the first one.
+
+If either fails, stop and fix that first. Neither has a degraded form that is still worth
+writing the rule against.
+
+### The rule
+
+In the hosted Grafana: **Alerting → Alert rules → New alert rule**.
+
+1. **Query A**, data source = the hosted Prometheus that receives your writes, in code
+   mode:
+
+   ```promql
+   count(up{job="prometheus"}) OR on() vector(0)
+   ```
+
+   The `OR on() vector(0)` is the load-bearing half. `count()` over a selector that
+   matches nothing returns *no data*, not zero, and a threshold condition on no data is
+   not evaluated — so the naive form of this rule is silent in exactly the situation it
+   exists for. The fallback vector turns silence into the number 0, which a threshold can
+   compare.
+
+2. **Condition**: expression B, type Threshold, input A, **IS BELOW 1**.
+
+3. **Evaluation**: a new folder and evaluation group, evaluate every `1m`, **pending
+   period `10m`**. Ten minutes is longer than a pod roll, a node reboot or a scrape gap,
+   and short enough to matter. A shorter pending period pages you for every deploy.
+
+4. **Configure no data and error handling**: no data → **Alerting**; execution error →
+   **Alerting**. Both default to something quieter, and both defaults are wrong here. For
+   this one rule, absence is the signal.
+
+5. **Contact point**: anything whose delivery path does not touch the cluster. Not the
+   cluster's own notification stack, and not mail relayed through a smarthost that runs
+   on it.
+
+6. **Summary**: state what it means and what it does not distinguish — "no metrics have
+   arrived for 10 minutes; the cluster, its network egress, or its monitoring stack is
+   down". The person reading it will not reconstruct that at the time.
+
+### What it proves, and what it does not
+
+- It proves that node, kubelet, Prometheus, egress and credentials were all working
+  within the last ten minutes. That is a great deal of coverage for one rule.
+- It cannot say **which** of those failed. It is a starting gun, not a diagnosis.
+- It says nothing about a cluster that is up while its workloads are broken. The
+  on-cluster rules cover that case, and they only work while the cluster is up. The two
+  sets are complements, and neither one substitutes for the other.
+- If the hosted account lapses or its ingestion quota is exceeded, writes fail and this
+  rule fires while the cluster is perfectly healthy. That is not a false positive — you
+  have genuinely lost the observer — but read the failure counter above before you go
+  looking at nodes.
+
+### Verifying it, which is the step that gets skipped
+
+An untested dead man's switch looks exactly like a working one, which is the failure mode
+it exists to prevent. Test it once, deliberately:
+
+- Stop the writes for longer than the pending period. Two ways: scale the Prometheus
+  workload to zero, or point `remoteWrite.url` at a host that does not resolve.
+- **Go through git.** A GitOps controller with self-heal reverts a live `kubectl` edit
+  within seconds, and you will conclude the rule does not work when what failed was the
+  test.
+- Watch the rule move Normal → Pending → Alerting, and confirm the contact point actually
+  delivered. Delivery is a separate failure surface from evaluation and is not implied by
+  a red rule in the UI.
+- Put it back, and record the date. Re-test after any change to the write filter, the
+  credentials, or the contact point.
+
+### If the hosted route is unavailable
+
+Any always-on machine outside the cluster can probe a public endpoint on a timer and push
+to a notification service when the probe fails. It is a weaker observer — it sees
+reachability, not whether alert evaluation is still happening — and it moves the single
+point of failure onto that machine. It needs no account, and it is not nothing. Say which
+of the two you have; do not let a reader assume the stronger one.

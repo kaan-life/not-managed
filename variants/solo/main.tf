@@ -167,21 +167,186 @@ env:
   HCLOUD_LOAD_BALANCERS_LOCATION:
     value: "nbg1"
   EOT
-  longhorn_merge_values    = <<-EOT
+  # Resource requests for all eight hcloud-csi containers. They shipped with none, which
+  # has two consequences, and the second is the reason this exists.
+  #
+  # 1. The scheduler weighs nodes by REQUESTS, not by usage. A container without a request
+  #    counts as zero, so a node full of them looks empty. That is how 63 of ~110 pods
+  #    ended up on one node.
+  # 2. More importantly: no request means QoS class BestEffort, and the kubelet evicts
+  #    BestEffort pods FIRST under node memory pressure. hcloud-csi-node carries no
+  #    priorityClassName, so a node under pressure evicts the very driver that mounts and
+  #    unmounts its volumes. Cilium is safe here -- it runs system-node-critical -- but the
+  #    CSI driver is not, and that is the gap this closes.
+  #
+  # Values measured, not guessed: memory = max working set over the full 3d Prometheus
+  # retention, cpu = p95 of rate(...[5m]) over 24h, then rounded up 15-30%.
+  #
+  #   controller  hcloud-csi-driver 16,0Mi  csi-attacher 45,6Mi  csi-resizer 55,6Mi
+  #               csi-provisioner 57,7Mi    liveness-probe 19,5Mi          -> 280Mi total
+  #   node        registrar 15,2Mi  liveness-probe 29,0Mi  driver 35,4Mi   -> 112Mi PER NODE
+  #
+  # Deliberately no memory limits: a request is what the scheduler needs; a limit only adds
+  # an OOM failure mode. Same reasoning as the companion GitOps repository applies to its
+  # own workloads.
+  #
+  # The key names are per-container and come from the chart itself
+  # (hcloud-csi 2.22.0, templates/{controller/deployment,node/daemonset}.yaml) -- a typo
+  # here does not fail, it silently renders no resources at all. Verify after applying:
+  #   kubectl -n kube-system get ds hcloud-csi-node \
+  #     -o jsonpath='{.spec.template.spec.containers[*].resources}'
+  hetzner_csi_merge_values = <<-EOT
+controller:
+  resources:
+    hcloudCSIDriver:
+      requests:
+        cpu: 10m
+        memory: 24Mi
+    csiAttacher:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    csiResizer:
+      requests:
+        cpu: 10m
+        memory: 80Mi
+    csiProvisioner:
+      requests:
+        cpu: 10m
+        memory: 80Mi
+    livenessProbe:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+node:
+  resources:
+    csiNodeDriverRegistrar:
+      requests:
+        cpu: 10m
+        memory: 24Mi
+    livenessProbe:
+      requests:
+        cpu: 10m
+        memory: 40Mi
+    hcloudCSIDriver:
+      requests:
+        cpu: 10m
+        memory: 48Mi
+  EOT
+  # Resource requests for cert-manager's three containers, same reasoning as the CSI block
+  # above: no request means QoS BestEffort, and none of these three carries a
+  # priorityClassName, so the kubelet evicts them first under node memory pressure. Losing
+  # the controller or the webhook does not take the cluster down, but it does stall every
+  # certificate renewal -- and the webhook is in the admission path for Certificate and
+  # Issuer objects, so while it is gone those writes fail rather than queue.
+  #
+  # Measured the same way: max working set over 3d, cpu p95 over 24h, rounded up.
+  #
+  #   controller 81,5Mi / 4m    cainjector 72,4Mi / 4m    webhook 55,1Mi / 3m
+  #
+  # No memory limits, for the reason given above.
+  #
+  # Chart key layout is NOT symmetric and is easy to get wrong: the controller's resources
+  # live at the TOP LEVEL (`resources:`), not under a `controller:` key -- verified against
+  # cert-manager v1.20.3 templates/deployment.yaml, which reads `.Values.resources`, while
+  # the other two read `.Values.webhook.resources` and `.Values.cainjector.resources`.
+  # A wrong key renders no resources at all and reports success. Verify after applying:
+  #   kubectl -n cert-manager get deploy cert-manager \
+  #     -o jsonpath='{.spec.template.spec.containers[0].resources}'
+  cert_manager_merge_values = <<-EOT
+resources:
+  requests:
+    cpu: 10m
+    memory: 112Mi
+cainjector:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 96Mi
+webhook:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 80Mi
+  EOT
+  longhorn_merge_values     = <<-EOT
 defaultSettings:
   defaultDataLocality: best-effort
   replicaSoftAntiAffinity: true
   EOT
-  traefik_merge_values     = <<-EOT
-affinity:
-  podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
-          topologyKey: kubernetes.io/hostname
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: traefik
+  # Traefik MUST be spread across nodes, not "preferably" (2026-08-22).
+  #
+  # The previous value was a preferredDuringScheduling anti-affinity, and in practice it
+  # did nothing at all: all THREE replicas sat on the same agent node. That node also
+  # carried Prometheus, kube-state-metrics, an identity provider, the CI controllers, four
+  # ArgoCD components and every production workload; it sat at 99% memory requests; and
+  # kured reboots it with force-reboot inside its nightly window -- measured, 3 reboots in
+  # 3 days. Every one of those reboots took all public ingress down at once.
+  #
+  # WHY NOT A REQUIRED ANTI-AFFINITY: Traefik carries no tolerations, so it can only land
+  # on the two untainted agent nodes; the CI node and the control plane are tainted. With
+  # 3 replicas a hard anti-affinity would leave one permanently Pending, which trades one
+  # failure mode for a worse one.
+  #
+  # replicas 3 -> 2 and nodeTaintsPolicy Honor -> Ignore, together, on 2026-08-23.
+  #
+  # WHY 2 REPLICAS. There are two STABLE schedulable nodes. Every distribution of 3 over 2
+  # is 2+1, so the heavier node stays a single point of failure and the third replica adds
+  # no availability. Worse: with 3 replicas, placeability depended on the ACCIDENTAL
+  # existence of an untainted autoscaler node. While one existed it counted as an empty
+  # domain, globalMin became 0, the stable nodes were each allowed only one pod, and the
+  # third replica stayed Pending for 14 hours (2026-08-23). When it went away, 2+1 became
+  # permitted again and the replicas re-concentrated onto one node. That is not an
+  # invariant, it is a dice roll.
+  #
+  # WHY Ignore, when Honor had been necessary a day earlier. That turned on the replica
+  # count, not on the policy by itself:
+  #   - at 3 replicas Ignore is fatal: tainted nodes count as empty domains, globalMin
+  #     becomes 0, so at most one pod per node, so one is permanently Pending. Shown
+  #     empirically with a throwaway deployment.
+  #   - at 2 replicas Ignore is STRONGER: globalMin is then always 0, so no node may ever
+  #     carry two Traefik pods of the same revision. Deterministic, regardless of how many
+  #     autoscaler nodes happen to exist at that moment.
+  # The pods never actually land on the tainted nodes -- the TaintToleration filter keeps
+  # them away -- so all you get is the counting effect.
+  #
+  # WHAT THIS DOES NOT SOLVE. With two stable nodes and kured --force-reboot=true you run
+  # on ONE replica during every node reboot, whatever number stands here. --concurrency is
+  # 1 (the default), so never two nodes at once, but one is enough. The real fix is a third
+  # stable node; this then becomes replicas: 3 with genuine spread, by itself.
+  #
+  # PDB: the module sets podDisruptionBudget maxUnavailable 33% (locals.tf, via
+  # var.traefik_pod_disruption_budget). At 2 replicas that rounds up to maxUnavailable 1,
+  # i.e. desiredHealthy 1 -- functionally the same as minAvailable: 1, so it is left alone
+  # deliberately. WATCH OUT on a future change to replicas: 1: 33% then gives
+  # desiredHealthy 0 and the protection disappears silently. The chart (v41) has no
+  # unhealthyPodEvictionPolicy, so that stays on the default IfHealthyBudget.
+  #
+  # matchLabelKeys: [pod-template-hash] is no more optional than the rest. Without it the
+  # labelSelector matches the pods of the OLD and the NEW ReplicaSet at the same time, and
+  # the chart rolls with maxUnavailable: 0 / maxSurge: 1 (verified against the running
+  # deployment). Without this key an upgrade wedges: the first surge pod lands, the second
+  # fits nowhere, and scaling the old ReplicaSet down is not allowed -- the rollout stalls
+  # with a mixed configuration. Terraform does not see that, because the helm controller
+  # runs the upgrade asynchronously.
+  #
+  # Both fields require k8s >= 1.27; this cluster runs v1.33.
+  #
+  # The labelSelector is literal on purpose rather than the Helm template from the chart's
+  # own example ({{ template "traefik.name" . }}): values are not passed through tpl by
+  # default, and this literal selector is already proven -- the old anti-affinity used it
+  # and the pods carry the label.
+  traefik_merge_values = <<-EOT
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    nodeTaintsPolicy: Ignore
+    matchLabelKeys:
+      - pod-template-hash
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: traefik
   EOT
 
   # k3s auto-upgrades ran in no window at all: system-upgrade-controller created upgrade
@@ -373,8 +538,19 @@ affinity:
     traefik_version          = local.traefik_version
     cilium_merge_values      = local.cilium_merge_values
     hetzner_ccm_merge_values = local.hetzner_ccm_merge_values
-    longhorn_merge_values    = local.longhorn_merge_values
-    traefik_merge_values     = local.traefik_merge_values
+    # KEEP IN SYNC, per the note above: hcloud-csi.yaml.tpl is rendered into the module's
+    # rendered_addons_sha (init.tf:564-706), so changing these values replaces the module's
+    # terraform_data.kustomization -- which re-applies the vanilla kured manifest and wipes
+    # the toleration patch. Without this line the plan would show the wipe and NOT the
+    # repair. That is the 2026-08-05 regression, exactly.
+    hetzner_csi_merge_values = local.hetzner_csi_merge_values
+    # Same KEEP IN SYNC rule: cert_manager.yaml.tpl is rendered into the module's
+    # rendered_addons_sha as well, so these values replace the module kustomization and the
+    # kured patch must be re-applied in the same plan.
+    cert_manager_merge_values = local.cert_manager_merge_values
+    longhorn_merge_values     = local.longhorn_merge_values
+    traefik_merge_values      = local.traefik_merge_values
+
     # Added with the inputs themselves, per the KEEP IN SYNC note above:
     # initial_k3s_channel is in the module's "versions" trigger and
     # system_upgrade_schedule_window is a trigger key in its own right.
@@ -1113,6 +1289,10 @@ module "kube-hetzner" {
 
   hetzner_ccm_merge_values = local.hetzner_ccm_merge_values
 
+  hetzner_csi_merge_values = local.hetzner_csi_merge_values
+
+  cert_manager_merge_values = local.cert_manager_merge_values
+
   longhorn_merge_values = local.longhorn_merge_values
 
   # Pinned explicitly, same audit and same mechanism as cert-manager above: the module
@@ -1124,12 +1304,29 @@ module "kube-hetzner" {
   # running when this was pinned.
   traefik_version = local.traefik_version
 
-  # All three Traefik replicas had been scheduled onto one node (audit 2026-06-12), so a
-  # single node reboot took down all ingress at once — three replicas providing exactly
-  # as much availability as one. Soft anti-affinity spreads them.
+  # Ingress replicas pinned explicitly at 2 (2026-08-23). Otherwise the module derives
+  # them from local.agent_count: above 2 agents it becomes 3 (locals.tf:2330). That count
+  # INCLUDES the CI agent node, where Traefik cannot land -- it is tainted and Traefik
+  # carries no tolerations. Three agents on paper, two places in reality.
   #
-  # Deliberately 'preferred' and not 'required': with only two schedulable agent nodes,
-  # 'required' would leave the third replica Pending forever, which trades one failure
-  # mode for another.
+  # Why THIS is the knob and deployment.replicas is not: the module also sets
+  # autoscaling.enabled=true with minReplicas set to this same number. An HPA owns the
+  # replica count, so deployment.replicas is ignored and a merge value on it is inert --
+  # tried first, did nothing. This variable feeds replicas, replicaCount and minReplicas
+  # at once.
+  #
+  # max is 2 as well: with maxSkew 1 + nodeTaintsPolicy Ignore, at most ONE Traefik pod
+  # fits per node, so scaling beyond the number of schedulable nodes yields nothing but
+  # Pending pods. The HPA had been left at max 10; at the measured load (cpu 2% of an 80%
+  # target) that is theory, but it is a trap you do not want to discover during a peak.
+  #
+  # If a third STABLE node is added, set both to 3.
+  ingress_replica_count     = 2
+  ingress_max_replica_count = 2
+
+  # All three Traefik replicas had been scheduled onto one node (audit 2026-06-12), so a
+  # single node reboot took every ingress down at once. The soft anti-affinity added at
+  # that time did nothing in practice; since 2026-08-22 a hard topologySpreadConstraint
+  # sits in local.traefik_merge_values. The reasoning is there.
   traefik_merge_values = local.traefik_merge_values
 }
