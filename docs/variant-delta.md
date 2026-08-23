@@ -13,17 +13,20 @@ Everything below is `diff -ru variants/solo variants/ha`, with timestamps stripp
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/.gitignore variants/ha/.gitignore
 --- variants/solo/.gitignore
 +++ variants/ha/.gitignore
-@@ -95,10 +95,3 @@
+@@ -60,12 +60,7 @@
+ !*.example.tfvars
+ !*.example.tfvars.json
  
- # PEM files (private keys, certificates)
- *.pem
--
--# Saved plan files. They are ZIP archives containing tfplan + tfstate, i.e. every
--# variable value including every secret, plus the whole state. One `git add -A` put
--# one of these in a commit on 2026-08-23; the export gate caught it before any push.
+-# Terraform plan outputs. A saved plan is a ZIP archive containing the plan AND the
+-# state, i.e. every variable value including every secret. `*.tfplan` alone does not
+-# match a plan written as `tfplan.<pid>` -- suffix, not prefix -- so both shapes are
+-# listed. Nothing here should ever be matchable by an ordinary `git add -A`.
 -tfplan
 -tfplan.*
--*.tfplan
++# Terraform plan outputs
+ *.tfplan
+ *.plan
+ 
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/README.md variants/ha/README.md
 --- variants/solo/README.md
 +++ variants/ha/README.md
@@ -995,41 +998,66 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
          # Fingerprint: changing kured_options re-renders the upstream kured manifest and
          # wipes the tolerations patch. Baking the fingerprint into the marker template makes
          # the same apply re-trigger the patch hook, so the two move together.
-@@ -810,46 +596,39 @@
+@@ -810,71 +596,39 @@
          # re-run whenever the module re-applies the upstream manifests.
          kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
        }
--      # NEWLINE-SEPARATED, NOT `&&`, AND THAT IS THE WHOLE POINT (2026-08-23).
+-      # ONE COMMAND PER LINE, THE SAFETY-CRITICAL ONE FIRST, AND AN EXPLICIT EXIT CODE.
+-      # Three rewrites got here; the first two were wrong and the record is worth keeping.
 -      #
--      # These three used to be joined with `&&`. Two of them carry their own trailing
--      # `|| true` (deliberately -- they are best-effort and must not break a green-field
--      # build where the objects do not exist yet). Spliced into one string that produced
+-      # WHAT WAS DEPLOYED, and it is not what an earlier version of this comment claimed.
+-      # The four commands were joined with `&&`, and two of them end in their own
+-      # `|| true`, so the rendered string was
 -      #
--      #     A && B || true && C && D || true
+-      #     kured && longhorn && storageclass||true && localskip||true
 -      #
--      # and `&&`/`||` have EQUAL precedence in bash and associate left to right, so it
--      # parsed as ((((A && B) || true) && C) && D) || true. Two consequences, both
--      # measured with a throwaway script rather than reasoned about:
+-      # i.e. A && B && C || true && D || true. `&&` and `||` have EQUAL precedence in bash
+-      # and associate left to right, so that parses as ((((A && B) && C) || true) && D)
+-      # || true. Measured, not reasoned: if A failed, **B AND C were both skipped and only
+-      # D ran**, and the list exited 0. An earlier version of this comment wrote the schema
+-      # as `A && B || true && C && D || true` and claimed "C and D still ran". That was a
+-      # string nobody deployed -- the Longhorn command ends in `; done`, not `|| true` --
+-      # and the throwaway script that "measured" it measured the invented string. The
+-      # conclusion survived the error; the demonstration did not.
 -      #
--      #   1. If the kured patch (A) failed, the StorageClass repair (B) was SKIPPED --
--      #      gated on an unrelated command -- while C and D still ran. That repair is the
--      #      fix for the 2026-07-03 double-default-StorageClass incident, and the
--      #      kustomize apply immediately before this hook re-asserts the local-path
--      #      manifest, so that is the worst possible thing to make conditional.
--      #   2. The list ENDED in `|| true`, so its status was 0 in every reachable case.
--      #      bash.sh.tpl's `set -e` exempts non-final operands of an AND-OR list and only
--      #      sees the list's overall status -- so `set -e` could never fire, remote-exec
--      #      always saw exit 0, and "Apply complete!" was not evidence that any of these
--      #      ran. Every failure in this hook was silent.
+-      # WHY THE ORDER AND THE EXIT CODE, not merely one command per line. Newline-separating
+-      # under the wrapper's `set -e` fixes the exit status but NOT the coupling: `set -e`
+-      # aborts at the first failure, so a failing kured patch still prevents the
+-      # StorageClass repair from running. Silent skipping becomes loud skipping, which is
+-      # better and is not what this comment used to claim. So:
+-      #   - `storageclass_default_fix_cmd` runs FIRST. It carries its own `|| true`, so it
+-      #     cannot abort anything after it, and nothing can gate it. It is the repair for
+-      #     the double-default-StorageClass incident, and the kustomize apply immediately
+-      #     before this hook re-asserts the local-path manifest, so it is the one command
+-      #     that must never be conditional.
+-      #   - the kured patch records its status instead of aborting, so the last command
+-      #     still runs, and `exit $rc` makes a real failure fail the provisioner and the
+-      #     apply. That is the detection the `&&` form never had.
 -      #
--      # With one command per line, `set -e` applies to each: a failing kured patch aborts
--      # the script non-zero, the provisioner fails, and the apply fails loudly. The two
--      # `|| true` commands keep their intended best-effort semantics because that suffix
--      # is now scoped to its own line instead of leaking down the chain.
+-      # GREEN-FIELD. The kured patch is the only command with no `|| true`, so it is the
+-      # only one whose failure is fatal, and a fresh build is where that would bite. It
+-      # does not: module init.tf:1028-1031 makes terraform_data.post_install_readiness
+-      # depend on terraform_data.kustomization (which deploys kured -- init.tf:559
+-      # `enable_kured`, default true and not overridden here) and on the agents, and
+-      # kustomization_user.tf:35-38 makes this hook depend on that readiness resource. The
+-      # DaemonSet therefore exists before this script runs. If `enable_kured` is ever set
+-      # false, this line must gain a guard.
+-      #
+-      # `set -o pipefail` because the wrapper sets only `set -e`: without it a pipeline
+-      # reports the status of its last element only. Neither surviving command contains a
+-      # pipeline today; the removed Longhorn one did, which is why it is worth pre-empting.
+-      #
+-      # NOT FIXED HERE, deliberately: the `|| true` on the two best-effort commands still
+-      # swallows a genuine failure on a cluster where the object does exist. The right
+-      # shape is to tolerate NotFound and let anything else propagate. That is a larger
+-      # change than this one and it needs its own green-field proof.
 -      post_commands = <<-EOT
--        kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}'
+-        set -o pipefail
+-        rc=0
 -        ${local.storageclass_default_fix_cmd}
+-        kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}' || rc=$?
 -        ${local.local_storage_skip_cmd}
+-        exit $rc
 -      EOT
 +      post_commands = "kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}' && ${local.longhorn_small_no_sched_cmd} && ${local.storageclass_default_fix_cmd} && ${local.local_storage_skip_cmd}"
      }
@@ -1069,7 +1097,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -860,12 +639,12 @@
+@@ -885,12 +639,12 @@
        enable_public_ipv6 = false
      },
      {
@@ -1085,7 +1113,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -873,12 +652,15 @@
+@@ -898,12 +652,15 @@
        enable_public_ipv6 = false
      },
      {
@@ -1104,7 +1132,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -893,7 +675,7 @@
+@@ -918,7 +675,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -1113,7 +1141,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -924,7 +706,7 @@
+@@ -949,7 +706,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -1122,7 +1150,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -944,9 +726,35 @@
+@@ -969,9 +726,35 @@
        enable_public_ipv6 = false
      },
      {
@@ -1159,7 +1187,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -967,7 +775,7 @@
+@@ -992,7 +775,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -1168,7 +1196,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -1022,36 +830,9 @@
+@@ -1047,36 +830,9 @@
        #
        # MUST stay last in this list: kube-hetzner keys agent nodes by list index, so
        # inserting a pool earlier re-indexes (and recreates) the egress node.
@@ -1207,7 +1235,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -1077,15 +858,36 @@
+@@ -1102,15 +858,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -1247,7 +1275,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -1138,31 +940,28 @@
+@@ -1163,31 +940,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -1301,7 +1329,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -1180,15 +979,9 @@
+@@ -1205,18 +979,9 @@
    #            the autoscaler would have seen no signal at all. Load is not scheduling
    #            pressure. That problem needs a third STATIC worker, or fewer pods per node.
    #
@@ -1309,10 +1337,13 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  #   2026-08-08: agent-small at 97% of allocatable CPU requests, 88% memory. The cluster
 -  #               was at the edge of what it could schedule.
 -  #   2026-08-23: agent-large 36% CPU / 24% memory, agent-small 14% CPU / 20% memory.
--  # The pressure came off through work that had nothing to do with this pool: resource
--  # requests were set on the hcloud-csi and cert-manager containers (so the scheduler
--  # stopped treating loaded nodes as empty), and the autoscaled node absorbed a share of
--  # the pods. So min_nodes=0 staying at 0 is now plausible, where in August it was not.
+-  # What actually relieved the pressure was redistribution: the autoscaled node took a
+-  # share of the pods. Setting resource requests on the hcloud-csi and cert-manager
+-  # containers did NOT cause the drop and could not have -- the figure is % of allocatable
+-  # CPU *requests*, and giving requests to containers that had none can only raise that
+-  # numerator. What it changed is accuracy: the scheduler had been treating loaded nodes
+-  # as empty, so the earlier number was measuring something closer to nothing.
+-  # So min_nodes=0 staying at 0 is now plausible, where on 2026-08-08 it was not.
 -  # Re-measure before quoting either line; both are snapshots, not properties.
 +  # Measured context (2026-08-08): agent-small sits at 97% of allocatable CPU requests and
 +  # 88% memory. The cluster is already at the edge of what it can schedule, so min_nodes=0
@@ -1320,7 +1351,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #
    # UNTAINTED on purpose: the whole point is that evicted pods can land here during a
    # drain. A taint would make it useless for the case it exists to solve.
-@@ -1226,6 +1019,25 @@
+@@ -1254,6 +1019,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -1346,7 +1377,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -1233,13 +1045,33 @@
+@@ -1261,13 +1045,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -1385,7 +1416,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -1268,7 +1100,6 @@
+@@ -1296,7 +1100,6 @@
      # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
      # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
      # every node runs this line, so two clusters on one tailnet fight over the same prefix.
@@ -1393,7 +1424,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
    ]
  
-@@ -1300,15 +1131,11 @@
+@@ -1328,15 +1131,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -1414,7 +1445,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -1316,27 +1143,14 @@
+@@ -1344,27 +1143,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -1447,7 +1478,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -1362,18 +1176,12 @@
+@@ -1390,18 +1176,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -1472,7 +1503,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -1383,24 +1191,15 @@
+@@ -1411,24 +1191,15 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
@@ -1500,7 +1531,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    longhorn_merge_values = local.longhorn_merge_values
  
    # Pinned explicitly, same audit and same mechanism as cert-manager above: the module
-@@ -1412,29 +1211,12 @@
+@@ -1440,29 +1211,12 @@
    # running when this was pinned.
    traefik_version = local.traefik_version
  

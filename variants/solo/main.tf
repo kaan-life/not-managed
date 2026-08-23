@@ -810,37 +810,62 @@ module "kube-hetzner" {
         # re-run whenever the module re-applies the upstream manifests.
         kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
       }
-      # NEWLINE-SEPARATED, NOT `&&`, AND THAT IS THE WHOLE POINT (2026-08-23).
+      # ONE COMMAND PER LINE, THE SAFETY-CRITICAL ONE FIRST, AND AN EXPLICIT EXIT CODE.
+      # Three rewrites got here; the first two were wrong and the record is worth keeping.
       #
-      # These three used to be joined with `&&`. Two of them carry their own trailing
-      # `|| true` (deliberately -- they are best-effort and must not break a green-field
-      # build where the objects do not exist yet). Spliced into one string that produced
+      # WHAT WAS DEPLOYED, and it is not what an earlier version of this comment claimed.
+      # The four commands were joined with `&&`, and two of them end in their own
+      # `|| true`, so the rendered string was
       #
-      #     A && B || true && C && D || true
+      #     kured && longhorn && storageclass||true && localskip||true
       #
-      # and `&&`/`||` have EQUAL precedence in bash and associate left to right, so it
-      # parsed as ((((A && B) || true) && C) && D) || true. Two consequences, both
-      # measured with a throwaway script rather than reasoned about:
+      # i.e. A && B && C || true && D || true. `&&` and `||` have EQUAL precedence in bash
+      # and associate left to right, so that parses as ((((A && B) && C) || true) && D)
+      # || true. Measured, not reasoned: if A failed, **B AND C were both skipped and only
+      # D ran**, and the list exited 0. An earlier version of this comment wrote the schema
+      # as `A && B || true && C && D || true` and claimed "C and D still ran". That was a
+      # string nobody deployed -- the Longhorn command ends in `; done`, not `|| true` --
+      # and the throwaway script that "measured" it measured the invented string. The
+      # conclusion survived the error; the demonstration did not.
       #
-      #   1. If the kured patch (A) failed, the StorageClass repair (B) was SKIPPED --
-      #      gated on an unrelated command -- while C and D still ran. That repair is the
-      #      fix for the 2026-07-03 double-default-StorageClass incident, and the
-      #      kustomize apply immediately before this hook re-asserts the local-path
-      #      manifest, so that is the worst possible thing to make conditional.
-      #   2. The list ENDED in `|| true`, so its status was 0 in every reachable case.
-      #      bash.sh.tpl's `set -e` exempts non-final operands of an AND-OR list and only
-      #      sees the list's overall status -- so `set -e` could never fire, remote-exec
-      #      always saw exit 0, and "Apply complete!" was not evidence that any of these
-      #      ran. Every failure in this hook was silent.
+      # WHY THE ORDER AND THE EXIT CODE, not merely one command per line. Newline-separating
+      # under the wrapper's `set -e` fixes the exit status but NOT the coupling: `set -e`
+      # aborts at the first failure, so a failing kured patch still prevents the
+      # StorageClass repair from running. Silent skipping becomes loud skipping, which is
+      # better and is not what this comment used to claim. So:
+      #   - `storageclass_default_fix_cmd` runs FIRST. It carries its own `|| true`, so it
+      #     cannot abort anything after it, and nothing can gate it. It is the repair for
+      #     the double-default-StorageClass incident, and the kustomize apply immediately
+      #     before this hook re-asserts the local-path manifest, so it is the one command
+      #     that must never be conditional.
+      #   - the kured patch records its status instead of aborting, so the last command
+      #     still runs, and `exit $rc` makes a real failure fail the provisioner and the
+      #     apply. That is the detection the `&&` form never had.
       #
-      # With one command per line, `set -e` applies to each: a failing kured patch aborts
-      # the script non-zero, the provisioner fails, and the apply fails loudly. The two
-      # `|| true` commands keep their intended best-effort semantics because that suffix
-      # is now scoped to its own line instead of leaking down the chain.
+      # GREEN-FIELD. The kured patch is the only command with no `|| true`, so it is the
+      # only one whose failure is fatal, and a fresh build is where that would bite. It
+      # does not: module init.tf:1028-1031 makes terraform_data.post_install_readiness
+      # depend on terraform_data.kustomization (which deploys kured -- init.tf:559
+      # `enable_kured`, default true and not overridden here) and on the agents, and
+      # kustomization_user.tf:35-38 makes this hook depend on that readiness resource. The
+      # DaemonSet therefore exists before this script runs. If `enable_kured` is ever set
+      # false, this line must gain a guard.
+      #
+      # `set -o pipefail` because the wrapper sets only `set -e`: without it a pipeline
+      # reports the status of its last element only. Neither surviving command contains a
+      # pipeline today; the removed Longhorn one did, which is why it is worth pre-empting.
+      #
+      # NOT FIXED HERE, deliberately: the `|| true` on the two best-effort commands still
+      # swallows a genuine failure on a cluster where the object does exist. The right
+      # shape is to tolerate NotFound and let anything else propagate. That is a larger
+      # change than this one and it needs its own green-field proof.
       post_commands = <<-EOT
-        kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}'
+        set -o pipefail
+        rc=0
         ${local.storageclass_default_fix_cmd}
+        kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}' || rc=$?
         ${local.local_storage_skip_cmd}
+        exit $rc
       EOT
     }
   }
@@ -1184,10 +1209,13 @@ module "kube-hetzner" {
   #   2026-08-08: agent-small at 97% of allocatable CPU requests, 88% memory. The cluster
   #               was at the edge of what it could schedule.
   #   2026-08-23: agent-large 36% CPU / 24% memory, agent-small 14% CPU / 20% memory.
-  # The pressure came off through work that had nothing to do with this pool: resource
-  # requests were set on the hcloud-csi and cert-manager containers (so the scheduler
-  # stopped treating loaded nodes as empty), and the autoscaled node absorbed a share of
-  # the pods. So min_nodes=0 staying at 0 is now plausible, where in August it was not.
+  # What actually relieved the pressure was redistribution: the autoscaled node took a
+  # share of the pods. Setting resource requests on the hcloud-csi and cert-manager
+  # containers did NOT cause the drop and could not have -- the figure is % of allocatable
+  # CPU *requests*, and giving requests to containers that had none can only raise that
+  # numerator. What it changed is accuracy: the scheduler had been treating loaded nodes
+  # as empty, so the earlier number was measuring something closer to nothing.
+  # So min_nodes=0 staying at 0 is now plausible, where on 2026-08-08 it was not.
   # Re-measure before quoting either line; both are snapshots, not properties.
   #
   # UNTAINTED on purpose: the whole point is that evicted pods can land here during a
