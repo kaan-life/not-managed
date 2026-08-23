@@ -451,10 +451,19 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    node_os = "microos"
  
    # ── Inputs that re-trigger the UPSTREAM kustomization ──────────────────────
-@@ -145,19 +175,20 @@
-   kured_version        = "1.21.0"
-   cert_manager_version = "v1.20.3"
-   traefik_version      = "41.0.0"
+@@ -140,28 +170,25 @@
+   #
+   # KEEP IN SYNC: adding any module input that appears in the module's kustomization trigger
+   # set WITHOUT adding it here re-opens exactly this failure, and it fails silent.
+-  hetzner_ccm_version = "v1.22.0"
+-  hetzner_csi_version = "v2.22.0"
+-  # Locals rather than literals in the module block below, ONLY so the fingerprint can
+-  # reference them. The reasoning for the values themselves is at their use site.
+-  ingress_replica_count     = 2
+-  ingress_max_replica_count = 2
+-  kured_version             = "1.21.0"
+-  cert_manager_version      = "v1.20.3"
+-  traefik_version           = "41.0.0"
 -  # Pinned during the 3.1.0 upgrade, at the version the cluster is ALREADY running
 -  # (measured: `kubectl -n kube-system get ds cilium -o jsonpath=...` -> cilium:v1.17.0).
 -  # It was inherited before: 2.19.2 defaulted to 1.17.0 and this file said nothing, so the
@@ -464,6 +473,11 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  # is a change with its own upgrade notes and its own blast radius; it gets its own PR.
 -  cilium_version           = "1.17.0"
 -  cilium_merge_values      = <<-EOT
++  hetzner_ccm_version  = "v1.22.0"
++  hetzner_csi_version  = "v2.22.0"
++  kured_version        = "1.21.0"
++  cert_manager_version = "v1.20.3"
++  traefik_version      = "41.0.0"
 +  # Pinned during the 3.1.0 upgrade, at the version 2.19.2 defaulted to. It was inherited
 +  # before, so the module bump — whose default is 1.19.3 — would have carried the CNI
 +  # across two minor versions inside a plan whose headline change was an input rename.
@@ -481,7 +495,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    hetzner_ccm_merge_values = <<-EOT
  env:
    HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP:
-@@ -165,227 +196,23 @@
+@@ -169,227 +196,23 @@
    HCLOUD_LOAD_BALANCERS_DISABLE_PRIVATE_INGRESS:
      value: "true"
    HCLOUD_LOAD_BALANCERS_LOCATION:
@@ -552,8 +566,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -      requests:
 -        cpu: 10m
 -        memory: 48Mi
-+    value: "${var.primary_location}"
-   EOT
+-  EOT
 -  # Resource requests for cert-manager's three containers, same reasoning as the CSI block
 -  # above: no request means QoS BestEffort, and none of these three carries a
 -  # priorityClassName, so the kubelet evicts them first under node memory pressure. Losing
@@ -589,7 +602,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -    requests:
 -      cpu: 10m
 -      memory: 80Mi
--  EOT
++    value: "${var.primary_location}"
+   EOT
 -  longhorn_merge_values     = <<-EOT
 +  longhorn_merge_values    = <<-EOT
  defaultSettings:
@@ -721,7 +735,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    EOT
  
    # k3s auto-upgrades ran in no window at all: system-upgrade-controller created upgrade
-@@ -414,8 +241,8 @@
+@@ -418,8 +241,8 @@
    #
    # 3.1.0 renamed the MODULE INPUT to k3s_channel and changed its default from "v1.33" to
    # "stable" — so the value below stopped being a no-op the moment the module moved, and
@@ -732,7 +746,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    # fingerprint is a sha1 over the JSON, key names included. Renaming the key would change
    # the hash and re-run the kured/storageclass patch hook for no reason at all.
    # A CHANNEL NAME, BUT NOT A FLOATING ONE — and that changed under us, so it is worth
-@@ -491,6 +318,18 @@
+@@ -495,6 +318,18 @@
        - level: Metadata
    EOT
  
@@ -751,7 +765,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    # TWO THINGS THE AUTOSCALER DOES NOT GIVE YOU, both measured on 2026-08-17 on the
    # cluster this repository is exported from. Neither is a reason not to use it; both
    # are reasons not to put anything load-bearing behind it without knowing.
-@@ -512,14 +351,11 @@
+@@ -516,14 +351,11 @@
    #    the cluster autoscaler creates them from a rendered cloudInit blob. That toggle
    #    therefore cannot run for them, and nothing else re-enables the timer.
    #
@@ -771,7 +785,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #
    #    An earlier version of this comment also noted that this was the only node with
    #    repeated container-runtime stalls, which invited the reading that being unpatched
-@@ -527,10 +363,8 @@
+@@ -531,10 +363,8 @@
    #    same 6.19.5 kernel from the same snapshot and did not stall, while the stalling
    #    node carried 63 of ~110 pods on 4 vCPU. Load is the better explanation, and the
    #    measurable precursor is the kubelet's own housekeeping loop -- it logged
@@ -784,7 +798,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #
    #    `automatically_upgrade_os = true` covers the static pools, not this one. And
    #    min_nodes = 0 does not make the node short-lived: it stayed up five days
-@@ -563,9 +397,9 @@
+@@ -567,9 +397,9 @@
      {
        name        = "autoscaled"
        server_type = "cx33"
@@ -796,7 +810,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        os          = local.node_os
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
-@@ -582,19 +416,8 @@
+@@ -586,35 +416,8 @@
      traefik_version          = local.traefik_version
      cilium_merge_values      = local.cilium_merge_values
      hetzner_ccm_merge_values = local.hetzner_ccm_merge_values
@@ -812,13 +826,29 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -    cert_manager_merge_values = local.cert_manager_merge_values
 -    longhorn_merge_values     = local.longhorn_merge_values
 -    traefik_merge_values      = local.traefik_merge_values
+-    # ingress_replica_count and ingress_max_replica_count belong here for a reason that is
+-    # one indirection away and therefore easy to miss. They are not module inputs that
+-    # appear in the trigger set by name; they feed local.ingress_replica_count in the
+-    # module, which renders into traefik_values_default (replicas, replicaCount,
+-    # minReplicas, maxReplicas), which becomes module.values_merger_traefik.values, which
+-    # is local.traefik_values -- and THAT is an element of the module's helm_values_yaml
+-    # trigger at init.tf:520. So changing either number replaces the upstream
+-    # terraform_data.kustomization and re-applies the vanilla kured manifest.
+-    #
+-    # Caught 2026-08-23, after the apply that set them. It did not bite, and only by luck:
+-    # the topologySpreadConstraint landed in the same apply, so traefik_merge_values moved
+-    # the fingerprint anyway and the patch hook re-ran. Verified afterwards -- kured 5/5
+-    # with all four tolerations. Change either of these ALONE without these two lines and
+-    # the tolerations go silently, which is the 2026-08-05 failure exactly.
+-    ingress_replica_count     = local.ingress_replica_count
+-    ingress_max_replica_count = local.ingress_max_replica_count
 -
 +    longhorn_merge_values    = local.longhorn_merge_values
 +    traefik_merge_values     = local.traefik_merge_values
      # Added with the inputs themselves, per the KEEP IN SYNC note above:
      # initial_k3s_channel is in the module's "versions" trigger and
      # system_upgrade_schedule_window is a trigger key in its own right.
-@@ -656,38 +479,30 @@
+@@ -676,38 +479,30 @@
    #     which provider 1.60.1 still REQUIRES." Moot rather than fixed: 3.1.0 declares
    #     hcloud >= 1.62.0, so 1.60.1 cannot be installed against it at all —
    #     `terraform init` exits 1 with "no available releases match the given constraints
@@ -875,7 +905,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #   count = contains(var.enabled_architectures, "arm") && local.os_arch_requirements.microos.arm && ...
    # Naming x86 here closes the first clause explicitly rather than relying on the second.
    enabled_architectures = ["x86"]
-@@ -717,14 +532,12 @@
+@@ -737,14 +532,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -894,7 +924,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -787,11 +600,35 @@
+@@ -807,11 +600,35 @@
      }
    }
  
@@ -932,7 +962,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -802,12 +639,12 @@
+@@ -822,12 +639,12 @@
        enable_public_ipv6 = false
      },
      {
@@ -948,7 +978,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -815,12 +652,15 @@
+@@ -835,12 +652,15 @@
        enable_public_ipv6 = false
      },
      {
@@ -967,7 +997,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -835,7 +675,7 @@
+@@ -855,7 +675,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -976,7 +1006,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -866,7 +706,7 @@
+@@ -886,7 +706,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -985,7 +1015,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -886,9 +726,35 @@
+@@ -906,9 +726,35 @@
        enable_public_ipv6 = false
      },
      {
@@ -1022,7 +1052,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -909,7 +775,7 @@
+@@ -929,7 +775,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -1031,7 +1061,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -964,36 +830,9 @@
+@@ -984,36 +830,9 @@
        #
        # MUST stay last in this list: kube-hetzner keys agent nodes by list index, so
        # inserting a pool earlier re-indexes (and recreates) the egress node.
@@ -1070,7 +1100,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -1019,15 +858,36 @@
+@@ -1039,15 +858,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -1110,7 +1140,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -1080,31 +940,28 @@
+@@ -1100,31 +940,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -1164,7 +1194,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -1162,6 +1019,25 @@
+@@ -1182,6 +1019,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -1190,7 +1220,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -1169,13 +1045,33 @@
+@@ -1189,13 +1045,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -1229,7 +1259,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -1204,7 +1100,6 @@
+@@ -1224,7 +1100,6 @@
      # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
      # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
      # every node runs this line, so two clusters on one tailnet fight over the same prefix.
@@ -1237,7 +1267,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
    ]
  
-@@ -1236,15 +1131,11 @@
+@@ -1256,15 +1131,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -1258,7 +1288,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -1252,27 +1143,14 @@
+@@ -1272,27 +1143,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -1291,7 +1321,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -1298,18 +1176,12 @@
+@@ -1318,18 +1176,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -1316,7 +1346,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -1319,24 +1191,15 @@
+@@ -1339,24 +1191,15 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
@@ -1344,7 +1374,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    longhorn_merge_values = local.longhorn_merge_values
  
    # Pinned explicitly, same audit and same mechanism as cert-manager above: the module
-@@ -1348,29 +1211,12 @@
+@@ -1368,29 +1211,12 @@
    # running when this was pinned.
    traefik_version = local.traefik_version
  
@@ -1365,8 +1395,8 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  # target) that is theory, but it is a trap you do not want to discover during a peak.
 -  #
 -  # If a third STABLE node is added, set both to 3.
--  ingress_replica_count     = 2
--  ingress_max_replica_count = 2
+-  ingress_replica_count     = local.ingress_replica_count
+-  ingress_max_replica_count = local.ingress_max_replica_count
 -
    # All three Traefik replicas had been scheduled onto one node (audit 2026-06-12), so a
 -  # single node reboot took every ingress down at once. The soft anti-affinity added at

@@ -140,11 +140,15 @@ locals {
   #
   # KEEP IN SYNC: adding any module input that appears in the module's kustomization trigger
   # set WITHOUT adding it here re-opens exactly this failure, and it fails silent.
-  hetzner_ccm_version  = "v1.22.0"
-  hetzner_csi_version  = "v2.22.0"
-  kured_version        = "1.21.0"
-  cert_manager_version = "v1.20.3"
-  traefik_version      = "41.0.0"
+  hetzner_ccm_version = "v1.22.0"
+  hetzner_csi_version = "v2.22.0"
+  # Locals rather than literals in the module block below, ONLY so the fingerprint can
+  # reference them. The reasoning for the values themselves is at their use site.
+  ingress_replica_count     = 2
+  ingress_max_replica_count = 2
+  kured_version             = "1.21.0"
+  cert_manager_version      = "v1.20.3"
+  traefik_version           = "41.0.0"
   # Pinned during the 3.1.0 upgrade, at the version the cluster is ALREADY running
   # (measured: `kubectl -n kube-system get ds cilium -o jsonpath=...` -> cilium:v1.17.0).
   # It was inherited before: 2.19.2 defaulted to 1.17.0 and this file said nothing, so the
@@ -594,6 +598,22 @@ topologySpreadConstraints:
     cert_manager_merge_values = local.cert_manager_merge_values
     longhorn_merge_values     = local.longhorn_merge_values
     traefik_merge_values      = local.traefik_merge_values
+    # ingress_replica_count and ingress_max_replica_count belong here for a reason that is
+    # one indirection away and therefore easy to miss. They are not module inputs that
+    # appear in the trigger set by name; they feed local.ingress_replica_count in the
+    # module, which renders into traefik_values_default (replicas, replicaCount,
+    # minReplicas, maxReplicas), which becomes module.values_merger_traefik.values, which
+    # is local.traefik_values -- and THAT is an element of the module's helm_values_yaml
+    # trigger at init.tf:520. So changing either number replaces the upstream
+    # terraform_data.kustomization and re-applies the vanilla kured manifest.
+    #
+    # Caught 2026-08-23, after the apply that set them. It did not bite, and only by luck:
+    # the topologySpreadConstraint landed in the same apply, so traefik_merge_values moved
+    # the fingerprint anyway and the patch hook re-ran. Verified afterwards -- kured 5/5
+    # with all four tolerations. Change either of these ALONE without these two lines and
+    # the tolerations go silently, which is the 2026-08-05 failure exactly.
+    ingress_replica_count     = local.ingress_replica_count
+    ingress_max_replica_count = local.ingress_max_replica_count
 
     # Added with the inputs themselves, per the KEEP IN SYNC note above:
     # initial_k3s_channel is in the module's "versions" trigger and
@@ -1365,8 +1385,8 @@ module "kube-hetzner" {
   # target) that is theory, but it is a trap you do not want to discover during a peak.
   #
   # If a third STABLE node is added, set both to 3.
-  ingress_replica_count     = 2
-  ingress_max_replica_count = 2
+  ingress_replica_count     = local.ingress_replica_count
+  ingress_max_replica_count = local.ingress_max_replica_count
 
   # All three Traefik replicas had been scheduled onto one node (audit 2026-06-12), so a
   # single node reboot took every ingress down at once. The soft anti-affinity added at
