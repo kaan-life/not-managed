@@ -481,7 +481,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    hetzner_ccm_merge_values = <<-EOT
  env:
    HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP:
-@@ -165,204 +196,23 @@
+@@ -165,227 +196,23 @@
    HCLOUD_LOAD_BALANCERS_DISABLE_PRIVATE_INGRESS:
      value: "true"
    HCLOUD_LOAD_BALANCERS_LOCATION:
@@ -605,29 +605,52 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  # kured reboots it with force-reboot inside its nightly window -- measured, 3 reboots in
 -  # 3 days. Every one of those reboots took all public ingress down at once.
 -  #
--  # WHY NOT A REQUIRED ANTI-AFFINITY: Traefik carries no tolerations, so it can only land
--  # on the two untainted agent nodes; the CI node and the control plane are tainted. With
--  # 3 replicas a hard anti-affinity would leave one permanently Pending, which trades one
--  # failure mode for a worse one.
+-  # WHY NOT A REQUIRED ANTI-AFFINITY: with 3 replicas, Traefik carrying no tolerations and
+-  # only two untainted agent nodes, a hard anti-affinity leaves one replica permanently
+-  # Pending. Be honest about what shipped instead, though: at 2 replicas, maxSkew 1 +
+-  # DoNotSchedule + Ignore IS a hard anti-affinity, as the invariant three paragraphs down
+-  # states outright. What makes it acceptable here is the replica count, not the choice of
+-  # mechanism. The spread constraint is preferred over anti-affinity because it degrades
+-  # sensibly if a third stable node ever appears, not because it is softer.
 -  #
 -  # replicas 3 -> 2 and nodeTaintsPolicy Honor -> Ignore, together, on 2026-08-23.
 -  #
 -  # WHY 2 REPLICAS. There are two STABLE schedulable nodes. Every distribution of 3 over 2
 -  # is 2+1, so the heavier node stays a single point of failure and the third replica adds
--  # no availability. Worse: with 3 replicas, placeability depended on the ACCIDENTAL
--  # existence of an untainted autoscaler node -- present, three pods spread one per node;
--  # absent, the third replica has nowhere to go and stays Pending. It was Pending for
--  # hours on 2026-08-23 for exactly that reason. That is not an invariant, it is a dice
--  # roll on a pool whose floor is zero and which Terraform cannot see.
+-  # no availability at all. And with 3 replicas the placement depends on the ACCIDENTAL
+-  # existence of an untainted autoscaler node, on a pool whose floor is zero and which
+-  # Terraform cannot see. Measured 2026-08-23 with throwaway 3-replica Deployments
+-  # carrying this exact constraint:
 -  #
--  # CORRECTED 2026-08-23 after an independent review. An earlier version of this comment
--  # blamed the Pending replica on the autoscaler node counting as an EMPTY domain under
--  # Honor. That is wrong, and measurably so: an untainted node is a legal placement
--  # target under both policies, so it is a domain that gets filled, not one that drags
--  # globalMin down. Measured with two throwaway 3-replica Deployments carrying this exact
--  # constraint, one per policy, while the autoscaler node was up: BOTH placed 3/3, one
--  # pod on each untainted node. The Pending replica was the state before that node
--  # existed, not a consequence of its existence.
+-  #   3 untainted nodes, Honor  -> 3/3 placed, one per node
+-  #   3 untainted nodes, Ignore -> 3/3 placed, one per node
+-  #   2 untainted nodes, Honor  -> 3/3 placed, 2+1 (globalMin 1, so skew 2-1 = 1, allowed)
+-  #   2 untainted nodes, Ignore -> 2 placed, ONE PENDING ("2 node(s) didn't match pod
+-  #                                topology spread constraints")
+-  #
+-  # So the third replica is only Pending in the bottom row, and the bottom row is the
+-  # configuration in force from 2026-08-23 onward. That is not an invariant, it is a dice
+-  # roll on whether the autoscaler node happens to exist.
+-  #
+-  # CORRECTED TWICE ON 2026-08-23, both times after an independent review found the stated
+-  # cause wrong. Worth reading, because the second correction was wrong too and only the
+-  # measurement settled it.
+-  #
+-  #   v1 blamed the Pending replica on the autoscaler node counting as an EMPTY domain
+-  #      under Honor. Wrong: an untainted node is a legal placement target under both
+-  #      policies, so it is a domain that gets filled, not one that drags globalMin down.
+-  #   v2 then blamed its ABSENCE -- "no third node, so nowhere to go". Also wrong, for the
+-  #      policy that was actually in force at the time: the table above shows Honor with
+-  #      two untainted nodes placing 3/3 as 2+1.
+-  #
+-  # THE REAL CAUSE OF THE PENDING REPLICA ON 2026-08-22/23 IS UNESTABLISHED. Whatever it
+-  # was, topology spread under Honor does not explain it, and the pod events from that
+-  # window are gone. Plausible and unchecked: admission on resources (that node was at 99%
+-  # memory requests), or old/new ReplicaSet label overlap before matchLabelKeys was added
+-  # -- which the paragraph on matchLabelKeys below describes as wedging a rollout exactly
+-  # this way. Do not let this comment tell you the answer; it does not have one. What the
+-  # measurements above DO establish is the placement behaviour of each configuration, and
+-  # that is what the settings are chosen on.
 -  #
 -  # WHY Ignore, when Honor had been necessary a day earlier. That turned on the replica
 -  # count, not on the policy by itself:
@@ -698,7 +721,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    EOT
  
    # k3s auto-upgrades ran in no window at all: system-upgrade-controller created upgrade
-@@ -391,8 +241,8 @@
+@@ -414,8 +241,8 @@
    #
    # 3.1.0 renamed the MODULE INPUT to k3s_channel and changed its default from "v1.33" to
    # "stable" — so the value below stopped being a no-op the moment the module moved, and
@@ -709,7 +732,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    # fingerprint is a sha1 over the JSON, key names included. Renaming the key would change
    # the hash and re-run the kured/storageclass patch hook for no reason at all.
    # A CHANNEL NAME, BUT NOT A FLOATING ONE — and that changed under us, so it is worth
-@@ -468,6 +318,18 @@
+@@ -491,6 +318,18 @@
        - level: Metadata
    EOT
  
@@ -728,7 +751,40 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    # TWO THINGS THE AUTOSCALER DOES NOT GIVE YOU, both measured on 2026-08-17 on the
    # cluster this repository is exported from. Neither is a reason not to use it; both
    # are reasons not to put anything load-bearing behind it without knowing.
-@@ -535,9 +397,9 @@
+@@ -512,14 +351,11 @@
+   #    the cluster autoscaler creates them from a rendered cloudInit blob. That toggle
+   #    therefore cannot run for them, and nothing else re-enables the timer.
+   #
+-  #    Be precise about the claim, and about the limits of this one. "Never patched at all"
+-  #    is too strong: the same runcmd deletes /var/run/reboot-required immediately after
+-  #    disabling the timer, which is at least consistent with a sentinel existing by then,
+-  #    and therefore with one first-boot update whose result is discarded. It does not
+-  #    establish that -- a sentinel baked into the snapshot, or plain defensive cleanup,
+-  #    explains the deletion just as well. UNCHECKED HYPOTHESIS. It is settled by one
+-  #    command on a fresh autoscaler node: `journalctl -u transactional-update`. What IS
+-  #    established is the part that matters operationally: no ONGOING updates.
++  #    Be precise about the claim. The timer most likely still fires ONCE during first
++  #    boot: the same runcmd deletes /var/run/reboot-required immediately after disabling
++  #    it, which only makes sense if a sentinel can already exist by then. So it is at
++  #    most one first-boot update whose result is discarded, and nothing afterwards --
++  #    not "never patched at all".
+   #
+   #    An earlier version of this comment also noted that this was the only node with
+   #    repeated container-runtime stalls, which invited the reading that being unpatched
+@@ -527,10 +363,8 @@
+   #    same 6.19.5 kernel from the same snapshot and did not stall, while the stalling
+   #    node carried 63 of ~110 pods on 4 vCPU. Load is the better explanation, and the
+   #    measurable precursor is the kubelet's own housekeeping loop -- it logged
+-  #    "Housekeeping took longer than expected" -- a 1.4s housekeeping pass nineteen
+-  #    seconds before the first stall, and a 46.4s one before a later episode in which the
+-  #    container runtime never went down at all. The seconds are the duration of the pass,
+-  #    not the lead time.
++  #    "Housekeeping took longer than expected" at 1.4s before the first stall and at
++  #    46.4s before a later one, in which the container runtime never went down at all.
+   #
+   #    `automatically_upgrade_os = true` covers the static pools, not this one. And
+   #    min_nodes = 0 does not make the node short-lived: it stayed up five days
+@@ -563,9 +397,9 @@
      {
        name        = "autoscaled"
        server_type = "cx33"
@@ -740,7 +796,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        os          = local.node_os
        labels = {
          "node.kubernetes.io/role" = "autoscaled"
-@@ -554,19 +416,8 @@
+@@ -582,19 +416,8 @@
      traefik_version          = local.traefik_version
      cilium_merge_values      = local.cilium_merge_values
      hetzner_ccm_merge_values = local.hetzner_ccm_merge_values
@@ -762,7 +818,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      # Added with the inputs themselves, per the KEEP IN SYNC note above:
      # initial_k3s_channel is in the module's "versions" trigger and
      # system_upgrade_schedule_window is a trigger key in its own right.
-@@ -628,38 +479,30 @@
+@@ -656,38 +479,30 @@
    #     which provider 1.60.1 still REQUIRES." Moot rather than fixed: 3.1.0 declares
    #     hcloud >= 1.62.0, so 1.60.1 cannot be installed against it at all —
    #     `terraform init` exits 1 with "no available releases match the given constraints
@@ -819,7 +875,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    #   count = contains(var.enabled_architectures, "arm") && local.os_arch_requirements.microos.arm && ...
    # Naming x86 here closes the first clause explicitly rather than relying on the second.
    enabled_architectures = ["x86"]
-@@ -689,14 +532,12 @@
+@@ -717,14 +532,12 @@
    # days here, set 2026-08-05) rather than versioning kept forever.
    ssh_private_key = null
  
@@ -838,7 +894,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    cluster_name = var.cluster_name
  
    network_region = "eu-central"
-@@ -759,11 +600,35 @@
+@@ -787,11 +600,35 @@
      }
    }
  
@@ -876,7 +932,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -774,12 +639,12 @@
+@@ -802,12 +639,12 @@
        enable_public_ipv6 = false
      },
      {
@@ -892,7 +948,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -787,12 +652,15 @@
+@@ -815,12 +652,15 @@
        enable_public_ipv6 = false
      },
      {
@@ -911,7 +967,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
        os = local.node_os
  
-@@ -807,7 +675,7 @@
+@@ -835,7 +675,7 @@
        # Resized cx23(4GB)→cx33(8GB) 2026-06-13: the DB node (6 postgres + keycloak-pg +
        # redis, all 7 hcloud-volumes attach here) was memory-bound at ~85%. cx33 doubles RAM.
        server_type = "cx33",
@@ -920,7 +976,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -838,7 +706,7 @@
+@@ -866,7 +706,7 @@
      {
        name        = "agent-large",
        server_type = "cx33",
@@ -929,7 +985,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels      = [],
        taints      = [],
        count       = 1
-@@ -858,9 +726,35 @@
+@@ -886,9 +726,35 @@
        enable_public_ipv6 = false
      },
      {
@@ -966,7 +1022,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/server-usage=storage"
        ],
-@@ -881,7 +775,7 @@
+@@ -909,7 +775,7 @@
      {
        name        = "egress",
        server_type = "cx23",
@@ -975,7 +1031,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=egress"
        ],
-@@ -936,36 +830,9 @@
+@@ -964,36 +830,9 @@
        #
        # MUST stay last in this list: kube-hetzner keys agent nodes by list index, so
        # inserting a pool earlier re-indexes (and recreates) the egress node.
@@ -1014,7 +1070,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
        labels = [
          "node.kubernetes.io/role=ci"
        ],
-@@ -991,15 +858,36 @@
+@@ -1019,15 +858,36 @@
    ]
  
    load_balancer_type     = "lb11"
@@ -1054,7 +1110,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_delete_protection = {
      floating_ip   = true
      load_balancer = true
-@@ -1052,31 +940,28 @@
+@@ -1080,31 +940,28 @@
  
    automatically_upgrade_kubernetes = true
  
@@ -1108,7 +1164,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
  
    system_upgrade_schedule_window = local.system_upgrade_schedule_window
    k3s_channel                    = local.initial_k3s_channel
-@@ -1134,6 +1019,25 @@
+@@ -1162,6 +1019,25 @@
    control_planes_custom_config = {
      etcd-snapshot-schedule-cron = "0 */4 * * *"
      etcd-snapshot-retention     = 42
@@ -1134,7 +1190,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    }
  
    # Not in local.kustomization_trigger_fingerprint on purpose: this input drives
-@@ -1141,13 +1045,33 @@
+@@ -1169,13 +1045,33 @@
    # it in the fingerprint would re-run the kured patch for no reason.
    audit_policy_config = local.k3s_audit_policy
  
@@ -1173,7 +1229,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    postinstall_exec = [
      local.local_storage_skip_cmd,
    ]
-@@ -1176,7 +1100,6 @@
+@@ -1204,7 +1100,6 @@
      # F10: advertise only the Hetzner private network /16, not the entire 10.0.0.0/8
      # See var.tailscale_advertise_routes for why this is a variable rather than a literal:
      # every node runs this line, so two clusters on one tailnet fight over the same prefix.
@@ -1181,7 +1237,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
      "tailscale up --authkey=${var.tailscale_auth_key}${length(var.tailscale_advertise_routes) > 0 ? " --advertise-routes=${join(",", var.tailscale_advertise_routes)}" : ""} --accept-dns=false --advertise-tags=tag:k8s-nat"
    ]
  
-@@ -1208,15 +1131,11 @@
+@@ -1236,15 +1131,11 @@
    # (ping blocked). Same literal `false` in both, opposite meaning — so saying nothing here
    # would have silently dropped the firewall's ICMP rule during a version bump.
    #
@@ -1202,7 +1258,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    allow_inbound_icmp = true
  
    cni_plugin = "cilium"
-@@ -1224,27 +1143,14 @@
+@@ -1252,27 +1143,14 @@
    # NOT a straight rename of 2.19.2's disable_kube_proxy, and the difference is the whole
    # point. 2.19.2 hardcoded `kubeProxyReplacement: true` and `bpf.masquerade: true` in the
    # Cilium values NO MATTER what disable_kube_proxy said; that flag only decided whether
@@ -1235,7 +1291,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    enable_kube_proxy = false
  
    cilium_version = local.cilium_version
-@@ -1270,18 +1176,12 @@
+@@ -1298,18 +1176,12 @@
    #
    # BOOTSTRAP ORDER, for a cluster that does not exist yet: the address is assigned by
    # Tailscale when the control plane first joins the tailnet, so it cannot be known in
@@ -1260,7 +1316,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    additional_tls_sans       = var.bootstrap_phase ? [] : [var.kube_api_tailnet_address]
    kubeconfig_server_address = var.bootstrap_phase ? "" : var.kube_api_tailnet_address
  
-@@ -1291,24 +1191,15 @@
+@@ -1319,24 +1191,15 @@
    # NAT-router rebuild (public IP preserved via the stable primary-IP resource; kubectl over
    # the tailnet is unaffected). The resulting 6443 forward on the NAT router's public IP is
    # firewall-gated to firewall_kube_api_source (100.64.0.0/10), so it is not publicly reachable.
@@ -1288,7 +1344,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
    longhorn_merge_values = local.longhorn_merge_values
  
    # Pinned explicitly, same audit and same mechanism as cert-manager above: the module
-@@ -1320,29 +1211,12 @@
+@@ -1348,29 +1211,12 @@
    # running when this was pinned.
    traefik_version = local.traefik_version
  

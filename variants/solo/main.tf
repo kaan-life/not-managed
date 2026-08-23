@@ -283,29 +283,52 @@ defaultSettings:
   # kured reboots it with force-reboot inside its nightly window -- measured, 3 reboots in
   # 3 days. Every one of those reboots took all public ingress down at once.
   #
-  # WHY NOT A REQUIRED ANTI-AFFINITY: Traefik carries no tolerations, so it can only land
-  # on the two untainted agent nodes; the CI node and the control plane are tainted. With
-  # 3 replicas a hard anti-affinity would leave one permanently Pending, which trades one
-  # failure mode for a worse one.
+  # WHY NOT A REQUIRED ANTI-AFFINITY: with 3 replicas, Traefik carrying no tolerations and
+  # only two untainted agent nodes, a hard anti-affinity leaves one replica permanently
+  # Pending. Be honest about what shipped instead, though: at 2 replicas, maxSkew 1 +
+  # DoNotSchedule + Ignore IS a hard anti-affinity, as the invariant three paragraphs down
+  # states outright. What makes it acceptable here is the replica count, not the choice of
+  # mechanism. The spread constraint is preferred over anti-affinity because it degrades
+  # sensibly if a third stable node ever appears, not because it is softer.
   #
   # replicas 3 -> 2 and nodeTaintsPolicy Honor -> Ignore, together, on 2026-08-23.
   #
   # WHY 2 REPLICAS. There are two STABLE schedulable nodes. Every distribution of 3 over 2
   # is 2+1, so the heavier node stays a single point of failure and the third replica adds
-  # no availability. Worse: with 3 replicas, placeability depended on the ACCIDENTAL
-  # existence of an untainted autoscaler node -- present, three pods spread one per node;
-  # absent, the third replica has nowhere to go and stays Pending. It was Pending for
-  # hours on 2026-08-23 for exactly that reason. That is not an invariant, it is a dice
-  # roll on a pool whose floor is zero and which Terraform cannot see.
+  # no availability at all. And with 3 replicas the placement depends on the ACCIDENTAL
+  # existence of an untainted autoscaler node, on a pool whose floor is zero and which
+  # Terraform cannot see. Measured 2026-08-23 with throwaway 3-replica Deployments
+  # carrying this exact constraint:
   #
-  # CORRECTED 2026-08-23 after an independent review. An earlier version of this comment
-  # blamed the Pending replica on the autoscaler node counting as an EMPTY domain under
-  # Honor. That is wrong, and measurably so: an untainted node is a legal placement
-  # target under both policies, so it is a domain that gets filled, not one that drags
-  # globalMin down. Measured with two throwaway 3-replica Deployments carrying this exact
-  # constraint, one per policy, while the autoscaler node was up: BOTH placed 3/3, one
-  # pod on each untainted node. The Pending replica was the state before that node
-  # existed, not a consequence of its existence.
+  #   3 untainted nodes, Honor  -> 3/3 placed, one per node
+  #   3 untainted nodes, Ignore -> 3/3 placed, one per node
+  #   2 untainted nodes, Honor  -> 3/3 placed, 2+1 (globalMin 1, so skew 2-1 = 1, allowed)
+  #   2 untainted nodes, Ignore -> 2 placed, ONE PENDING ("2 node(s) didn't match pod
+  #                                topology spread constraints")
+  #
+  # So the third replica is only Pending in the bottom row, and the bottom row is the
+  # configuration in force from 2026-08-23 onward. That is not an invariant, it is a dice
+  # roll on whether the autoscaler node happens to exist.
+  #
+  # CORRECTED TWICE ON 2026-08-23, both times after an independent review found the stated
+  # cause wrong. Worth reading, because the second correction was wrong too and only the
+  # measurement settled it.
+  #
+  #   v1 blamed the Pending replica on the autoscaler node counting as an EMPTY domain
+  #      under Honor. Wrong: an untainted node is a legal placement target under both
+  #      policies, so it is a domain that gets filled, not one that drags globalMin down.
+  #   v2 then blamed its ABSENCE -- "no third node, so nowhere to go". Also wrong, for the
+  #      policy that was actually in force at the time: the table above shows Honor with
+  #      two untainted nodes placing 3/3 as 2+1.
+  #
+  # THE REAL CAUSE OF THE PENDING REPLICA ON 2026-08-22/23 IS UNESTABLISHED. Whatever it
+  # was, topology spread under Honor does not explain it, and the pod events from that
+  # window are gone. Plausible and unchecked: admission on resources (that node was at 99%
+  # memory requests), or old/new ReplicaSet label overlap before matchLabelKeys was added
+  # -- which the paragraph on matchLabelKeys below describes as wedging a rollout exactly
+  # this way. Do not let this comment tell you the answer; it does not have one. What the
+  # measurements above DO establish is the placement behaviour of each configuration, and
+  # that is what the settings are chosen on.
   #
   # WHY Ignore, when Honor had been necessary a day earlier. That turned on the replica
   # count, not on the policy by itself:
@@ -489,11 +512,14 @@ topologySpreadConstraints:
   #    the cluster autoscaler creates them from a rendered cloudInit blob. That toggle
   #    therefore cannot run for them, and nothing else re-enables the timer.
   #
-  #    Be precise about the claim. The timer most likely still fires ONCE during first
-  #    boot: the same runcmd deletes /var/run/reboot-required immediately after disabling
-  #    it, which only makes sense if a sentinel can already exist by then. So it is at
-  #    most one first-boot update whose result is discarded, and nothing afterwards --
-  #    not "never patched at all".
+  #    Be precise about the claim, and about the limits of this one. "Never patched at all"
+  #    is too strong: the same runcmd deletes /var/run/reboot-required immediately after
+  #    disabling the timer, which is at least consistent with a sentinel existing by then,
+  #    and therefore with one first-boot update whose result is discarded. It does not
+  #    establish that -- a sentinel baked into the snapshot, or plain defensive cleanup,
+  #    explains the deletion just as well. UNCHECKED HYPOTHESIS. It is settled by one
+  #    command on a fresh autoscaler node: `journalctl -u transactional-update`. What IS
+  #    established is the part that matters operationally: no ONGOING updates.
   #
   #    An earlier version of this comment also noted that this was the only node with
   #    repeated container-runtime stalls, which invited the reading that being unpatched
@@ -501,8 +527,10 @@ topologySpreadConstraints:
   #    same 6.19.5 kernel from the same snapshot and did not stall, while the stalling
   #    node carried 63 of ~110 pods on 4 vCPU. Load is the better explanation, and the
   #    measurable precursor is the kubelet's own housekeeping loop -- it logged
-  #    "Housekeeping took longer than expected" at 1.4s before the first stall and at
-  #    46.4s before a later one, in which the container runtime never went down at all.
+  #    "Housekeeping took longer than expected" -- a 1.4s housekeeping pass nineteen
+  #    seconds before the first stall, and a 46.4s one before a later episode in which the
+  #    container runtime never went down at all. The seconds are the duration of the pass,
+  #    not the lead time.
   #
   #    `automatically_upgrade_os = true` covers the static pools, not this one. And
   #    min_nodes = 0 does not make the node short-lived: it stayed up five days
