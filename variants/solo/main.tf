@@ -293,17 +293,26 @@ defaultSettings:
   # WHY 2 REPLICAS. There are two STABLE schedulable nodes. Every distribution of 3 over 2
   # is 2+1, so the heavier node stays a single point of failure and the third replica adds
   # no availability. Worse: with 3 replicas, placeability depended on the ACCIDENTAL
-  # existence of an untainted autoscaler node. While one existed it counted as an empty
-  # domain, globalMin became 0, the stable nodes were each allowed only one pod, and the
-  # third replica stayed Pending for 14 hours (2026-08-23). When it went away, 2+1 became
-  # permitted again and the replicas re-concentrated onto one node. That is not an
-  # invariant, it is a dice roll.
+  # existence of an untainted autoscaler node -- present, three pods spread one per node;
+  # absent, the third replica has nowhere to go and stays Pending. It was Pending for
+  # hours on 2026-08-23 for exactly that reason. That is not an invariant, it is a dice
+  # roll on a pool whose floor is zero and which Terraform cannot see.
+  #
+  # CORRECTED 2026-08-23 after an independent review. An earlier version of this comment
+  # blamed the Pending replica on the autoscaler node counting as an EMPTY domain under
+  # Honor. That is wrong, and measurably so: an untainted node is a legal placement
+  # target under both policies, so it is a domain that gets filled, not one that drags
+  # globalMin down. Measured with two throwaway 3-replica Deployments carrying this exact
+  # constraint, one per policy, while the autoscaler node was up: BOTH placed 3/3, one
+  # pod on each untainted node. The Pending replica was the state before that node
+  # existed, not a consequence of its existence.
   #
   # WHY Ignore, when Honor had been necessary a day earlier. That turned on the replica
   # count, not on the policy by itself:
-  #   - at 3 replicas Ignore is fatal: tainted nodes count as empty domains, globalMin
-  #     becomes 0, so at most one pod per node, so one is permanently Pending. Shown
-  #     empirically with a throwaway deployment.
+  #   - at 3 replicas Ignore caps placement at one pod per node: tainted nodes count as
+  #     empty domains, so globalMin is 0. That is fatal only while fewer than three
+  #     untainted nodes exist -- which is the normal state here, the autoscaler pool
+  #     having a floor of zero. Shown empirically with a throwaway deployment, both ways.
   #   - at 2 replicas Ignore is STRONGER: globalMin is then always 0, so no node may ever
   #     carry two Traefik pods of the same revision. Deterministic, regardless of how many
   #     autoscaler nodes happen to exist at that moment.
@@ -311,9 +320,16 @@ defaultSettings:
   # them away -- so all you get is the counting effect.
   #
   # WHAT THIS DOES NOT SOLVE. With two stable nodes and kured --force-reboot=true you run
-  # on ONE replica during every node reboot, whatever number stands here. --concurrency is
-  # 1 (the default), so never two nodes at once, but one is enough. The real fix is a third
-  # stable node; this then becomes replicas: 3 with genuine spread, by itself.
+  # on ONE replica during a node reboot while the autoscaler pool is empty, whatever number
+  # stands here. --concurrency is 1 (the default), so never two nodes at once, but one is
+  # enough. Be precise about the cause, because an earlier version of this comment was not:
+  # the single replica is a consequence of Ignore, not of having two stable nodes. Under
+  # Honor the cordoned node leaves the domain set, globalMin rises to 1, and the evicted
+  # pod is admitted onto the SURVIVING node -- two pods, co-located, so still one node away
+  # from a total outage. Ignore refuses that and leaves the second replica Pending instead,
+  # and a Pending pod is the autoscaler's scale-up signal (see autoscaler_nodepools above).
+  # That is the trade this setting makes. The real fix is a third stable node; this then
+  # becomes replicas: 3 with genuine spread, by itself.
   #
   # PDB: the module sets podDisruptionBudget maxUnavailable 33% (locals.tf, via
   # var.traefik_pod_disruption_budget). At 2 replicas that rounds up to maxUnavailable 1,
