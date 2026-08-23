@@ -10,6 +10,8 @@ reading this after following a comment, you are in the right place.
 2. [Bootstrapping a new cluster: the two-pass build](#2-bootstrapping-a-new-cluster-the-two-pass-build)
 3. [State: what protects it, and how to get it back](#3-state-what-protects-it-and-how-to-get-it-back)
 4. [etcd: what is backed up, and how to restore it](#4-etcd-what-is-backed-up-and-how-to-restore-it)
+5. [local-path: why this repository owns a k3s component](#5-local-path-why-this-repository-owns-a-k3s-component)
+6. [Dead man's switch: noticing from outside that the cluster stopped reporting](#6-dead-mans-switch-noticing-from-outside-that-the-cluster-stopped-reporting)
 
 ---
 
@@ -647,3 +649,249 @@ restart takes the *force* path, where the checksum comparison is skipped entirel
 both reach the same `shouldSkipFile` check, and that check runs before either, so the
 result carries. Confirming it after a genuine restart still costs nothing and is worth
 doing the next time one happens.
+
+---
+
+## 6. Dead man's switch: noticing from outside that the cluster stopped reporting
+
+> **Status: written, not carried out.** This section is the *procedure*. As of 2026-08-23
+> no such rule exists, and nothing outside this cluster observes it. Until somebody works
+> through the steps below and records the date in "Verifying it", the gap described in the
+> next paragraph — and in `docs/managed-k8s-parity.md` §3.3 — is still open. Do not read
+> the existence of this section as the existence of the control.
+
+Alert evaluation runs on the cluster. Every rule you write, and every notification it
+would send, depends on a pod that lives on a node inside the thing being watched. When
+that node stops, nothing evaluates and nothing pages — and the rule that would have told
+you so is one of the rules that stopped. `docs/managed-k8s-parity.md` §3.3 reaches the
+same gap from the other side and names the compensation without shipping it: "alert on
+NotReady from outside the cluster".
+
+### The mechanism, and why it is not another exporter
+
+Prometheus already writes a filtered copy of its series outward, to a hosted Prometheus,
+over remote write. The observer you need is therefore not a new component: it is **one
+alert rule in the hosted system that fires when those series stop arriving**. Nothing
+about it runs on the cluster, so the cluster cannot take it down with itself.
+
+**The better-known form of this, and why this is not it.** The Prometheus convention is a
+`Watchdog` alert — a rule whose expression is `vector(1)`, so it fires permanently, routed
+to an outside service that raises an incident when the stream of notifications stops.
+Silence is the failure signal. That form needs Alertmanager to be alive to keep sending,
+so it detects a dead Alertmanager but leans on a third-party dead-man's-switch service.
+The form below inverts it: the *query* looks for absence, in a system that already
+receives your data, so it needs no extra account and it survives Alertmanager being dead
+too. If you already pay for a dead-man's-switch service, the `Watchdog` form is less
+work; if you do not, this one costs nothing further.
+
+### Step 0 — the access precondition
+
+The whole value of this control is being reachable when the cluster is not, so establish
+before anything else, and write the answers down where the on-call person can reach them:
+
+- which hosted account receives the remote write, and whether it is in good standing;
+- that you can sign in to it **today** — not that you could once;
+- where that credential lives, and who else can reach it.
+
+An account you cannot log into is not an observer. If step 0 fails, stop here: the rest of
+this section is unbuildable, and the honest state of the system is that nothing outside
+the cluster is watching.
+
+### Prerequisites, checked before the rule is written
+
+Three checks. A rule written against a series that never arrives fires immediately and
+permanently, which is worth less than no rule at all, because it also trains you to
+ignore it.
+
+1. **The series `up` survives your write filter.** The remote write block normally carries
+   a `keep` relabel action listing the metric families worth exporting, because a free
+   tier has an active-series cap and `node_*` alone would exceed it. Confirm `up` is one
+   of them. It costs one series per scrape target. (The key is `write_relabel_configs`
+   under `remote_write` in raw Prometheus configuration, and `writeRelabelConfigs` under
+   `remoteWrite` in the Prometheus Operator CRD — grep for whichever your deployment
+   actually uses.)
+
+2. **The write is succeeding right now.** From inside the Prometheus pod:
+
+   ```bash
+   # expect 0
+   wget -qO- 'http://localhost:9090/api/v1/query?query=rate(prometheus_remote_storage_samples_failed_total%5B10m%5D)'
+   # expect a number that is larger the second time you run it
+   wget -qO- 'http://localhost:9090/api/v1/query?query=prometheus_remote_storage_samples_total'
+   ```
+
+   A zero failure rate on its own proves nothing: it is also what you get when nothing is
+   being sent. The pair of reads is the check, not the first one.
+
+3. **The selector the rule will use actually resolves on the other side.** This is the one
+   that matters, and it is the one that is easy to skip, because the first two look like
+   they cover it. They do not: both are read from inside the cluster and prove only that
+   samples left without error. Neither proves that a series matching the rule's exact
+   selector is queryable in the hosted store.
+
+   In the hosted Grafana, open **Explore**, select the data source that receives your
+   writes, and run:
+
+   ```promql
+   count(up{job="prometheus"})
+   ```
+
+   Expect a number ≥ 1. If it returns nothing, the label value is wrong for your
+   deployment — `job="prometheus"` is what a self-scrape job is called here, but a stock
+   kube-prometheus-stack names it after the generated ServiceMonitor instead. Fix the
+   selector now and use the fixed one in the rule below. This check subsumes both of the
+   others for the rule's purposes; keep them anyway, because they tell you *which* half is
+   broken when this one fails.
+
+If any of the three fails, stop and fix it. None has a degraded form still worth writing
+the rule against.
+
+### The rule
+
+In the hosted Grafana: **Alerts & IRM → Alert rules → + New alert rule**. (Older Grafana
+calls the top-level section **Alerting**; if the navigation does not match, that is why.)
+
+1. **Query A**, data source = the hosted Prometheus that receives your writes. **Set the
+   query type to `Instant`** — this is not optional and it is the step most likely to be
+   skipped, because the form defaults to a range query. A threshold needs one number per
+   series; a range query hands it a series, and you get either a rule stuck in Error or a
+   condition that means "some point in the window was below 1", which is a different and
+   much twitchier rule than the one described here. If you would rather leave the query as
+   a range, then you must put a **Reduce** expression with the `Last` reducer between the
+   query and the threshold — `Last`, not `Min`, or any single gap in the window fires.
+
+   In code mode:
+
+   ```promql
+   count(up{job="prometheus"}) OR on() vector(0)
+   ```
+
+   The `OR on() vector(0)` is the load-bearing half. `count()` over a selector that matches
+   nothing returns an empty vector, and the fallback turns that into the number 0 so the
+   threshold has something to compare. Grafana would otherwise treat it as no data, which
+   is not silent — see step 4 — but produces a synthetic alert instance carrying different
+   labels and none of the summary you write in step 6. Keeping the expression on the normal
+   path is the point. (The `on()` is inert here, both sides being label-less; it is written
+   out because it is what makes the construction read unambiguously.)
+
+2. **Condition**: a Threshold expression on A, **IS BELOW 1**.
+
+   Three states, one condition: series arriving → `count()` ≥ 1 → Normal. Series never
+   present → `vector(0)` → fires. Series arrived and stopped → `vector(0)` once they go
+   stale → fires.
+
+3. **Evaluation**: a new folder and evaluation group, evaluate every `1m`, **pending
+   period `10m`**.
+
+   **Know what that actually buys you, because it is not ten minutes.** An instant query
+   resolves a selector by looking back up to the data source's lookback delta, which
+   defaults to **5 minutes** in both Prometheus and Mimir (what backs Grafana Cloud). When
+   ingestion stops at T, the hosted store keeps answering with the last sample it received
+   until roughly T+5m; only then does the expression fall through to `vector(0)` and the
+   pending period start. Real time to firing is therefore
+
+       lookback delta + pending period + up to one evaluation interval  ≈  5m + 10m + 1m
+
+   — about **16 minutes**, plus whatever group wait the contact point adds. Size the
+   pending period knowing that, and use the sum, not the pending period, everywhere you
+   state a detection time.
+
+   Ten minutes is chosen to sit above a pod roll, a node reboot and a scrape gap. That is a
+   judgement, not a measurement: nothing here has timed how long remote write is actually
+   interrupted by a Prometheus restart on a network volume, where a volume detach and
+   attach plus WAL replay can run long. The lookback delta adds five minutes of accidental
+   headroom on top. If you have a measured number, put it here and replace this paragraph.
+
+4. **Configure no data and error handling**: no data → **Alerting**; execution error →
+   **Alerting**.
+
+   Both defaults already notify — Grafana's are `No Data` and `Error`, which emit firing
+   instances named `DatasourceNoData` and `DatasourceError`. Mapping them to Alerting is
+   not about breaking silence; it is about routing and content. Those synthetic instances
+   carry substituted labels, so a notification policy that routes on this rule's labels can
+   miss them, silences on this rule do not apply to them, and they arrive without the
+   summary you write in step 6.
+
+5. **Contact point**: one whose delivery does not depend on anything in the cluster. Note
+   the distinction — an external phone or paging *service* is fine and is probably the
+   right answer even if the cluster's own Alertmanager already sends to it. What must not
+   be in the path is a *sender* that lives on the cluster: its Alertmanager, or mail
+   relayed through a smarthost running there. Send to the service directly from the hosted
+   Grafana.
+
+6. **Summary**: state what it means and what it does not distinguish — "no metrics have
+   arrived for at least 15 minutes; the cluster, its network egress, or its monitoring
+   stack is down". The person reading it will not reconstruct that at the time.
+
+### Capture the rule where the rest of the system lives
+
+Everything else here is in version control; this rule would be a set of clicks in somebody
+else's tenant, and it is the one control designed to outlive the cluster. Export its
+provisioning definition (Grafana's alert-rule export, YAML or JSON) and commit it beside
+this runbook, together with the folder and evaluation group it belongs to. A hosted tenant
+that gets reset, or an account that moves, should cost you a re-import and not a
+re-derivation.
+
+### What it proves, and what it does not
+
+- It proves that node, container runtime, Prometheus, egress and credentials were all
+  working within the last quarter of an hour. That is a great deal of coverage for one
+  rule. It does **not** prove the kubelet was healthy: a wedged kubelet leaves running
+  containers running, so Prometheus can keep scraping itself and writing outward across a
+  kubelet outage.
+- It cannot say **which** of those failed. It is a starting gun, not a diagnosis.
+- It says nothing about a cluster that is up while its workloads are broken. The
+  on-cluster rules cover that case, and they only work while the cluster is up. The two
+  sets are complements, and neither substitutes for the other.
+- If the hosted account lapses or its ingestion quota is exceeded, writes fail and this
+  rule fires while the cluster is perfectly healthy. That is not a false positive — you
+  have genuinely lost the observer — but it is worth telling apart from a dead cluster.
+  **Do not try to tell them apart with the counter from prerequisite 2.** That read runs
+  inside the Prometheus pod, and in every scenario this rule fires that pod is unreachable
+  or gone; asking for it is asking you to query the thing whose silence paged you. The
+  distinguishing signal has to come from outside: the hosted account's own ingestion or
+  usage view, its billing state, or an independent reachability probe against a public
+  endpoint. If `prometheus_remote_storage_samples_failed_total` is in your write filter's
+  keep list, you can query it from the hosted side and that is the fastest answer; if it is
+  not — and it is not here — say so, and reach for the account view instead.
+
+### Verifying it, which is the step that gets skipped
+
+An untested dead man's switch looks exactly like a working one, which is the failure mode
+it exists to prevent. Test it once, deliberately:
+
+- **Stop the writes for longer than the lookback delta plus the pending period** — with the
+  values above, more than 15 minutes, and give it 20. Waiting only for the pending period
+  is the classic botched test: the rule sits in Normal and you conclude it is broken.
+- **Prefer breaking the destination to stopping Prometheus.** Pointing `remoteWrite.url` at
+  a host that does not resolve leaves scraping running, the WAL buffering and all
+  on-cluster rules evaluating. Scaling the Prometheus workload to zero also silences every
+  in-cluster rule for the duration, so a real incident inside the window is invisible and
+  the recovery produces a burst of notifications afterwards. If you do scale it to zero,
+  say so to whoever is on call first.
+- **Go through git.** A GitOps controller with self-heal reverts a live `kubectl` edit
+  within seconds, and you will conclude the rule does not work when what failed was the
+  test.
+- **Watch the rule move Normal → Pending → Alerting**, and confirm the contact point
+  actually delivered. Delivery is a separate failure surface from evaluation and is not
+  implied by a red rule in the UI.
+- **If it does not move**, work the three in order before touching the rule: run the
+  section's query in Explore and check it returns 0 rather than nothing; check the rule's
+  state history and its last evaluation timestamp to confirm it is evaluating at all; and
+  check that the writes really stopped, from the hosted side rather than from the cluster.
+- **Put it back, and record the date here.** Re-test after any change to the write filter,
+  the credentials or the contact point — **and on a fixed calendar interval regardless**,
+  six months being a reasonable default. The event-triggered re-tests only cover failures
+  somebody causes. The ones that actually kill a hosted free-tier observer are an account
+  lapse, a quota change, a tenant suspension, an expired token or a product sunset, and
+  nobody schedules those.
+
+  Last verified end to end: **never**.
+
+### If the hosted route is unavailable
+
+Any always-on machine outside the cluster can probe a public endpoint on a timer and push
+to a notification service when the probe fails. It is a weaker observer — it sees
+reachability, not whether alert evaluation is still happening — and it moves the single
+point of failure onto that machine. It needs no account, and it is not nothing. Say which
+of the two you have; do not let a reader assume the stronger one.
