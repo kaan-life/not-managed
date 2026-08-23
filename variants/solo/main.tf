@@ -47,16 +47,24 @@ locals {
     "time-zone"     = var.cluster_timezone
   }
 
-  # The small agent node hosts zero Longhorn replicas, but kept flipping Schedulable
-  # around Longhorn's 25% hard stop and polluted capacity monitoring with the noise.
-  # Turning scheduling off for it fixes that.
+  # REMOVED 2026-08-23: longhorn_small_no_sched_cmd. It turned Longhorn scheduling off on
+  # the small agent node, which hosts zero replicas and kept flipping Schedulable around
+  # Longhorn's 25% hard stop. Longhorn is not installed on this cluster -- no
+  # longhorn-system namespace, no longhorn.io API resources -- so the command could never
+  # match anything, and it printed
+  #     error: the server doesn't have a resource type "nodes"
+  # on every single run of the post-install hook. It was harmless: the command is a
+  # `for n in $(kubectl ...)` and an empty for-loop exits 0, so the && chain below
+  # survived. Harmless is not the same as free. postinstall.sh is `set -e`, so a genuine
+  # failure there aborts the apply -- which is the right behaviour, and it is the reason
+  # a standing error in that output is worth removing rather than tolerating: an operator
+  # who learns to scroll past errors here will scroll past a real one.
   #
-  # Longhorn does not reconcile spec.allowScheduling back, so a one-off patch would
-  # normally be enough. A node REBUILD is the exception: the manager recreates the Node
-  # custom resource with allowScheduling=true and a NEW random name suffix, so any
-  # hardcoded node name silently stops matching. Hence a loop over a name pattern,
-  # re-applied idempotently on every kustomize deploy.
-  longhorn_small_no_sched_cmd = "for n in $(kubectl --namespace longhorn-system get nodes.longhorn.io -o name | grep k3s-agent-small-); do kubectl --namespace longhorn-system patch $n --type=merge -p '{\"spec\":{\"allowScheduling\":false}}'; done"
+  # If Longhorn is ever enabled, restore it from git rather than rewriting it. The version
+  # in history handles the non-obvious part: a node REBUILD makes Longhorn recreate the
+  # Node custom resource with allowScheduling=true and a NEW random name suffix, so a
+  # hardcoded node name silently stops matching -- hence a loop over a name pattern,
+  # re-applied on every kustomize deploy.
 
   # Two StorageClasses both mark themselves default: the CSI class from the module
   # (replicated, survives node loss — the intended default) and local-path from the k3s
@@ -791,7 +799,6 @@ module "kube-hetzner" {
       source_folder = "extra-manifests"
       kustomize_parameters = {
         kured_tolerations_patch = local.kured_tolerations_patch
-        longhorn_small_no_sched = local.longhorn_small_no_sched_cmd
         # Fingerprint: changing kured_options re-renders the upstream kured manifest and
         # wipes the tolerations patch. Baking the fingerprint into the marker template makes
         # the same apply re-trigger the patch hook, so the two move together.
@@ -803,7 +810,38 @@ module "kube-hetzner" {
         # re-run whenever the module re-applies the upstream manifests.
         kustomization_trigger_fingerprint = local.kustomization_trigger_fingerprint
       }
-      post_commands = "kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}' && ${local.longhorn_small_no_sched_cmd} && ${local.storageclass_default_fix_cmd} && ${local.local_storage_skip_cmd}"
+      # NEWLINE-SEPARATED, NOT `&&`, AND THAT IS THE WHOLE POINT (2026-08-23).
+      #
+      # These three used to be joined with `&&`. Two of them carry their own trailing
+      # `|| true` (deliberately -- they are best-effort and must not break a green-field
+      # build where the objects do not exist yet). Spliced into one string that produced
+      #
+      #     A && B || true && C && D || true
+      #
+      # and `&&`/`||` have EQUAL precedence in bash and associate left to right, so it
+      # parsed as ((((A && B) || true) && C) && D) || true. Two consequences, both
+      # measured with a throwaway script rather than reasoned about:
+      #
+      #   1. If the kured patch (A) failed, the StorageClass repair (B) was SKIPPED --
+      #      gated on an unrelated command -- while C and D still ran. That repair is the
+      #      fix for the 2026-07-03 double-default-StorageClass incident, and the
+      #      kustomize apply immediately before this hook re-asserts the local-path
+      #      manifest, so that is the worst possible thing to make conditional.
+      #   2. The list ENDED in `|| true`, so its status was 0 in every reachable case.
+      #      bash.sh.tpl's `set -e` exempts non-final operands of an AND-OR list and only
+      #      sees the list's overall status -- so `set -e` could never fire, remote-exec
+      #      always saw exit 0, and "Apply complete!" was not evidence that any of these
+      #      ran. Every failure in this hook was silent.
+      #
+      # With one command per line, `set -e` applies to each: a failing kured patch aborts
+      # the script non-zero, the provisioner fails, and the apply fails loudly. The two
+      # `|| true` commands keep their intended best-effort semantics because that suffix
+      # is now scoped to its own line instead of leaking down the chain.
+      post_commands = <<-EOT
+        kubectl -n kube-system patch daemonset kured --type=strategic -p '${local.kured_tolerations_patch}'
+        ${local.storageclass_default_fix_cmd}
+        ${local.local_storage_skip_cmd}
+      EOT
     }
   }
 
@@ -1142,9 +1180,15 @@ module "kube-hetzner" {
   #            the autoscaler would have seen no signal at all. Load is not scheduling
   #            pressure. That problem needs a third STATIC worker, or fewer pods per node.
   #
-  # Measured context (2026-08-08): agent-small sits at 97% of allocatable CPU requests and
-  # 88% memory. The cluster is already at the edge of what it can schedule, so min_nodes=0
-  # may not stay at 0 for long — that is information the POC is meant to produce.
+  # Measured context, and it has moved a long way, which is the point of dating it.
+  #   2026-08-08: agent-small at 97% of allocatable CPU requests, 88% memory. The cluster
+  #               was at the edge of what it could schedule.
+  #   2026-08-23: agent-large 36% CPU / 24% memory, agent-small 14% CPU / 20% memory.
+  # The pressure came off through work that had nothing to do with this pool: resource
+  # requests were set on the hcloud-csi and cert-manager containers (so the scheduler
+  # stopped treating loaded nodes as empty), and the autoscaled node absorbed a share of
+  # the pods. So min_nodes=0 staying at 0 is now plausible, where in August it was not.
+  # Re-measure before quoting either line; both are snapshots, not properties.
   #
   # UNTAINTED on purpose: the whole point is that evicted pods can land here during a
   # drain. A taint would make it useless for the case it exists to solve.

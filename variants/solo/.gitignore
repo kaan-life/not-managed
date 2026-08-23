@@ -95,3 +95,10 @@ hcloud-projects.conf
 
 # PEM files (private keys, certificates)
 *.pem
+
+# Saved plan files. They are ZIP archives containing tfplan + tfstate, i.e. every
+# variable value including every secret, plus the whole state. One `git add -A` put
+# one of these in a commit on 2026-08-23; the export gate caught it before any push.
+tfplan
+tfplan.*
+*.tfplan
