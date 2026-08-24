@@ -60,7 +60,12 @@ terraform.rc
 !*.example.tfvars
 !*.example.tfvars.json
 
-# Terraform plan outputs
+# Terraform plan outputs. A saved plan is a ZIP archive containing the plan AND the
+# state, i.e. every variable value including every secret. `*.tfplan` alone does not
+# match a plan written as `tfplan.<pid>` -- suffix, not prefix -- so both shapes are
+# listed. Nothing here should ever be matchable by an ordinary `git add -A`.
+tfplan
+tfplan.*
 *.tfplan
 *.plan
 

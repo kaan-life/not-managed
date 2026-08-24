@@ -17,10 +17,6 @@ data:
   # as well. Without it the upstream re-render silently drops the egress toleration —
   # which is what happened on 2026-06-13 when the reboot window was first set.
   kured-options-fingerprint: '${kured_options_fingerprint}'
-  # Turns Longhorn scheduling off on the small agent node, which hosts no replicas.
-  # A block scalar, not a quoted string: the command contains both quote characters.
-  longhorn-small-no-sched: |
-    ${longhorn_small_no_sched}
   # The double-default-StorageClass repair (2026-07-03): marks local-path not-default.
   # Kept in the marker so editing it re-triggers the deploy hook.
   storageclass-default-fix: |
