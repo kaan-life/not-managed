@@ -46,8 +46,13 @@ for kind in "${RESOURCE_KINDS[@]}"; do
   # Here the silence was fail-SAFE -- doing nothing leaves protection ON -- so this is
   # consistency, not a live bug. In restore-protection.sh the identical code was
   # fail-DANGEROUS. Same shape, opposite consequence.
-  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>&1); then
-    guard_die "hcloud ${kind} list failed, so the target list is incomplete: ${listing}"
+  # stderr is deliberately NOT captured into $listing. Merging it with 2>&1 makes any
+  # warning hcloud prints on a SUCCESSFUL call parse as a resource row -- measured: a
+  # "warning: new hcloud version available" line became a phantom target whose id was
+  # "warning:". Leaving stderr on the terminal keeps $listing to real rows and still puts
+  # the error in front of the operator.
+  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection); then
+    guard_die "hcloud ${kind} list failed (its error is above), so the target list is incomplete"
   fi
   while read -r id name protection; do
     [ -z "${id:-}" ] && continue

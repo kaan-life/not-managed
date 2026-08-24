@@ -1638,7 +1638,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/remove-protection.sh variants/ha/remove-protection.sh
 --- variants/solo/remove-protection.sh
 +++ variants/ha/remove-protection.sh
-@@ -37,25 +37,13 @@
+@@ -37,30 +37,13 @@
    # resource kind has no members, so that path is reached every time. Hetzner resource
    # names cannot contain whitespace, so default-IFS splitting is safe here.
    # The protection column prints the literal "delete" when set, and nothing when not.
@@ -1651,8 +1651,13 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  # Here the silence was fail-SAFE -- doing nothing leaves protection ON -- so this is
 -  # consistency, not a live bug. In restore-protection.sh the identical code was
 -  # fail-DANGEROUS. Same shape, opposite consequence.
--  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>&1); then
--    guard_die "hcloud ${kind} list failed, so the target list is incomplete: ${listing}"
+-  # stderr is deliberately NOT captured into $listing. Merging it with 2>&1 makes any
+-  # warning hcloud prints on a SUCCESSFUL call parse as a resource row -- measured: a
+-  # "warning: new hcloud version available" line became a phantom target whose id was
+-  # "warning:". Leaving stderr on the terminal keeps $listing to real rows and still puts
+-  # the error in front of the operator.
+-  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection); then
+-    guard_die "hcloud ${kind} list failed (its error is above), so the target list is incomplete"
 -  fi
    while read -r id name protection; do
      [ -z "${id:-}" ] && continue
@@ -1668,7 +1673,7 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/restore-protection.sh variants/ha/restore-protection.sh
 --- variants/solo/restore-protection.sh
 +++ variants/ha/restore-protection.sh
-@@ -36,26 +36,13 @@
+@@ -36,31 +36,13 @@
    # resource kind has no members, so that path is reached every time. Hetzner resource
    # names cannot contain whitespace, so default-IFS splitting is safe here.
    # The protection column prints the literal "delete" when set, and nothing when not.
@@ -1682,8 +1687,13 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 -  # on. Here it is fail-DANGEROUS: the operator is told protection was restored when
 -  # nothing was protected, and the resources stay deletable. Same code, opposite
 -  # consequence, which is why "it is the same in both, so it is fine" is the wrong read.
--  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>&1); then
--    guard_die "hcloud ${kind} list failed, so the target list is incomplete: ${listing}"
+-  # stderr is deliberately NOT captured into $listing. Merging it with 2>&1 makes any
+-  # warning hcloud prints on a SUCCESSFUL call parse as a resource row -- measured: a
+-  # "warning: new hcloud version available" line became a phantom target whose id was
+-  # "warning:". Leaving stderr on the terminal keeps $listing to real rows and still puts
+-  # the error in front of the operator.
+-  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection); then
+-    guard_die "hcloud ${kind} list failed (its error is above), so the target list is incomplete"
 -  fi
    while read -r id name protection; do
      [ -z "${id:-}" ] && continue
