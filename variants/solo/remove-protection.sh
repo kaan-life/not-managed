@@ -19,8 +19,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/scripts/hcloud-guard.sh"
 
 guard_parse_args "$@"
 guard_load_token
-[ "$GUARD_REGISTER" -eq 1 ] && guard_register
-[ "$GUARD_PROTECT" -eq 1 ] && guard_protect
+# if/else, not `A && B`. Safe as written -- bash exempts a failing non-final member of an
+# && list from errexit, so a zero flag does not abort -- but it is the same shape this
+# sweep converted in scripts/assert-isolation.sh, and appending anything after it (or a
+# `|| ...`) turns it into the silent-guard form.
+if [ "$GUARD_REGISTER" -eq 1 ]; then guard_register; fi
+if [ "$GUARD_PROTECT" -eq 1 ]; then guard_protect; fi
 guard_assert_project
 
 RESOURCE_KINDS=(floating-ip volume load-balancer)
@@ -33,17 +37,47 @@ echo "Protected resources visible to this token:"
 for kind in "${RESOURCE_KINDS[@]}"; do
   # NB: read with the DEFAULT IFS, not IFS=$'\t'. Tab is IFS-whitespace, so a tab-only
   # IFS collapses leading empty fields — an empty line then parses as id="false" and a
-  # phantom resource enters the target list. hcloud emits exactly one empty line when a
-  # resource kind has no members, so that path is reached every time. Hetzner resource
-  # names cannot contain whitespace, so default-IFS splitting is safe here.
+  # phantom resource enters the target list. The empty row still occurs, but no longer for
+  # the reason this comment used to give: `$(...)` strips ALL trailing newlines, so
+  # hcloud's own empty line is gone before `read` sees it, and it is `<<<` -- which always
+  # presents at least one line -- that synthesises it. Either way the
+  # `[ -z "${id:-}" ] && continue` below is what covers it.
+  #
+  # COLUMN ORDER IS LOAD-BEARING: the possibly-empty column must be LAST. Default IFS
+  # collapses runs of whitespace anywhere, not only leading ones, so an empty INTERIOR
+  # field shifts every later field left. Measured:
+  #   id,name,protection  "42 web-01 "  -> id=42  name=web-01  protection=""   correct
+  #   id,protection,name  "42  web-01"  -> id=42  protection=web-01  name=""   WRONG
+  # A review proposed reordering to id,protection,name. That is the wrong direction:
+  # `protection` is empty for every UNprotected resource, so making it interior breaks the
+  # common case. `name` is the interior field today, and Hetzner auto-generates a name for
+  # every kind listed here, so the hazard is real in principle and unreachable in practice.
+  # Do not reorder these columns without re-deriving this.
   # The protection column prints the literal "delete" when set, and nothing when not.
+  # The listing is captured FIRST so its exit status can be checked. It used to be a
+  # process substitution with stderr discarded, and nothing consulted the status: a
+  # failing `hcloud` (expired token, API blip, wrong project) produced an empty list,
+  # COUNT stayed 0, and the script printed "(none -- nothing to do)" and exited 0.
+  # Reproduced 2026-08-24 with a stub `hcloud` that fails on every call.
+  #
+  # Here the silence was fail-SAFE -- doing nothing leaves protection ON -- so this is
+  # consistency, not a live bug. In restore-protection.sh the identical code was
+  # fail-DANGEROUS. Same shape, opposite consequence.
+  # stderr is deliberately NOT captured into $listing. Merging it with 2>&1 makes any
+  # warning hcloud prints on a SUCCESSFUL call parse as a resource row -- measured: a
+  # "warning: new hcloud version available" line became a phantom target whose id was
+  # "warning:". Leaving stderr on the terminal keeps $listing to real rows and still puts
+  # the error in front of the operator.
+  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection); then
+    guard_die "hcloud ${kind} list failed (its error is above), so the target list is incomplete"
+  fi
   while read -r id name protection; do
     [ -z "${id:-}" ] && continue
     if [ "${protection:-}" = "delete" ]; then
       printf '  %-14s %-12s %s\n' "$kind" "$id" "$name"
       TARGETS+=("${kind}"$'\t'"${id}"$'\t'"${name}")
     fi
-  done < <(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>/dev/null)
+  done <<<"$listing"
 done
 
 COUNT=${#TARGETS[@]}
