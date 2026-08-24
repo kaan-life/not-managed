@@ -1635,6 +1635,67 @@ diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfv
 +  variables { nat_router_hcloud_token = "" }
 +  expect_failures = [var.nat_router_hcloud_token]
 +}
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/remove-protection.sh variants/ha/remove-protection.sh
+--- variants/solo/remove-protection.sh
++++ variants/ha/remove-protection.sh
+@@ -37,25 +37,13 @@
+   # resource kind has no members, so that path is reached every time. Hetzner resource
+   # names cannot contain whitespace, so default-IFS splitting is safe here.
+   # The protection column prints the literal "delete" when set, and nothing when not.
+-  # The listing is captured FIRST so its exit status can be checked. It used to be a
+-  # process substitution with stderr discarded, and nothing consulted the status: a
+-  # failing `hcloud` (expired token, API blip, wrong project) produced an empty list,
+-  # COUNT stayed 0, and the script printed "(none -- nothing to do)" and exited 0.
+-  # Reproduced 2026-08-24 with a stub `hcloud` that fails on every call.
+-  #
+-  # Here the silence was fail-SAFE -- doing nothing leaves protection ON -- so this is
+-  # consistency, not a live bug. In restore-protection.sh the identical code was
+-  # fail-DANGEROUS. Same shape, opposite consequence.
+-  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>&1); then
+-    guard_die "hcloud ${kind} list failed, so the target list is incomplete: ${listing}"
+-  fi
+   while read -r id name protection; do
+     [ -z "${id:-}" ] && continue
+     if [ "${protection:-}" = "delete" ]; then
+       printf '  %-14s %-12s %s\n' "$kind" "$id" "$name"
+       TARGETS+=("${kind}"$'\t'"${id}"$'\t'"${name}")
+     fi
+-  done <<<"$listing"
++  done < <(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>/dev/null)
+ done
+ 
+ COUNT=${#TARGETS[@]}
+diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/restore-protection.sh variants/ha/restore-protection.sh
+--- variants/solo/restore-protection.sh
++++ variants/ha/restore-protection.sh
+@@ -36,26 +36,13 @@
+   # resource kind has no members, so that path is reached every time. Hetzner resource
+   # names cannot contain whitespace, so default-IFS splitting is safe here.
+   # The protection column prints the literal "delete" when set, and nothing when not.
+-  # The listing is captured FIRST so its exit status can be checked. It used to be a
+-  # process substitution with stderr discarded, and nothing consulted the status: a
+-  # failing `hcloud` (expired token, API blip, wrong project) produced an empty list,
+-  # COUNT stayed 0, and the script printed "(none -- nothing to do)" and exited 0.
+-  # Reproduced 2026-08-24 with a stub `hcloud` that fails on every call.
+-  #
+-  # In remove-protection.sh that silence is fail-SAFE -- doing nothing leaves protection
+-  # on. Here it is fail-DANGEROUS: the operator is told protection was restored when
+-  # nothing was protected, and the resources stay deletable. Same code, opposite
+-  # consequence, which is why "it is the same in both, so it is fine" is the wrong read.
+-  if ! listing=$(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>&1); then
+-    guard_die "hcloud ${kind} list failed, so the target list is incomplete: ${listing}"
+-  fi
+   while read -r id name protection; do
+     [ -z "${id:-}" ] && continue
+     if [ "${protection:-}" != "delete" ]; then
+       printf '  %-14s %-12s %s\n' "$kind" "$id" "$name"
+       TARGETS+=("${kind}"$'\t'"${id}"$'\t'"${name}")
+     fi
+-  done <<<"$listing"
++  done < <(hcloud "$kind" list -o noheader -o columns=id,name,protection 2>/dev/null)
+ done
+ 
+ COUNT=${#TARGETS[@]}
 diff -ru -x .terraform -x .terraform.lock.hcl -x backend.hcl -x secrets.auto.tfvars -x '*.tfstate*' -x __pycache__ variants/solo/secrets.auto.example.tfvars variants/ha/secrets.auto.example.tfvars
 --- variants/solo/secrets.auto.example.tfvars
 +++ variants/ha/secrets.auto.example.tfvars
