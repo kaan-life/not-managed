@@ -489,7 +489,7 @@ module "kube-hetzner" {
   #     added ssh_keys and user_data to hcloud_server.nat_router's ignore_changes. A
   #     replaced SSH key object costs nothing at runtime — Hetzner consumes ssh_keys only
   #     at server creation, and every server ignores that attribute.
-  version = "3.1.0"
+  version = "3.2.0"
 
   # THE REASON THIS MODULE WAS UPGRADED AT ALL, in one input.
   #
