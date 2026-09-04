@@ -702,7 +702,7 @@ module "kube-hetzner" {
   # The upgrade happened because 2.19.2 declared `data "hcloud_image" "microos_arm_snapshot"`
   # with no count — see enabled_architectures below for why that made a green-field build
   # impossible while Hetzner's ARM fleet was sold out.
-  version = "3.1.0"
+  version = "3.2.0"
 
   # THE REASON THIS MODULE WAS UPGRADED AT ALL, in one input.
   #
